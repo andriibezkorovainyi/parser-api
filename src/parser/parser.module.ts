@@ -14,32 +14,12 @@ import { HttpModule } from '@nestjs/axios';
 import { GatewayModule } from '../gateway/gateway.module';
 import { CacheModule } from '../cache/cache.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { CustomLoggerModule } from '../config/custom-logger.module';
+import { CacheService } from '../cache/cache.service';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: ['.env.development.local', '.env.development', '.env'],
-      validate,
-      load: [appConfig, databaseConfig],
-    }),
-    LoggerModule.forRootAsync({
-      useFactory: (configService: ConfigService) => ({
-        pinoHttp: {
-          level: configService.get<string>('app.logLevel'),
-          transport: {
-            target: 'pino-pretty',
-            options: {
-              levelFirst: true,
-              translateTime: 'UTC:yyyy-mm-dd HH:MM:ss.l',
-              singleLine: true,
-              colorize: true,
-            },
-          },
-        },
-      }),
-      inject: [ConfigService],
-    }),
+    CustomLoggerModule,
     TypeOrmModule.forRootAsync({
       useClass: TypeOrmConfigService,
       dataSourceFactory: async (options) => {

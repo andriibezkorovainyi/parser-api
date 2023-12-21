@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRedis } from '@liaoliaots/nestjs-redis';
 
 import { RedlockService } from '@anchan828/nest-redlock';
@@ -7,15 +7,19 @@ import { RedisNumberRetries } from '../constants/cache.constants';
 import { BlocksBulk, network } from '../constants/parser.constants';
 import { IGetParseToBlockResult } from '../utils/types/interfaces';
 import { isValidResult } from '../utils/helpers';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
 @Injectable()
 export class CacheService {
   constructor(
+    @InjectPinoLogger(CacheService.name)
+    private readonly logger: PinoLogger,
     @InjectRedis() private readonly redis: Redis,
-    private readonly redlockService: RedlockService,
   ) {}
 
-  async getNewPointer(): Promise<IGetParseToBlockResult> {
+  async getNewPointerHeight(): Promise<IGetParseToBlockResult> {
+    this.logger.info('Called method --> getNewPointerHeight');
+
     const result = {} as IGetParseToBlockResult;
 
     Object.assign(result, await this.performTransaction());
@@ -25,7 +29,7 @@ export class CacheService {
     }
 
     for (let i = 1; i < RedisNumberRetries + 1; i++) {
-      console.log('Retry to retrieve data from Redis:', i);
+      this.logger.warn('Retry to set new pointer height in cache:', i);
 
       await new Promise((resolve) => setTimeout(resolve, 2000));
 
@@ -40,6 +44,8 @@ export class CacheService {
   }
 
   async performTransaction(): Promise<IGetParseToBlockResult> {
+    this.logger.info('Called method --> performTransaction');
+
     const networkHeight = await this.getNetworkHeight();
 
     let pointer = NaN;
@@ -75,7 +81,7 @@ export class CacheService {
         throw new Error('Transaction to Redis is failed');
       }
     } catch (error) {
-      console.log(error);
+      this.logger.error(error);
 
       incrementPointerBy = NaN;
       newPointer = NaN;
@@ -123,7 +129,7 @@ export class CacheService {
     try {
       return this.redis.set(`${network}:networkHeight`, blockNumber);
     } catch (e) {
-      console.log(e);
+      this.logger.error(e);
     }
   }
 
@@ -138,7 +144,7 @@ export class CacheService {
         JSON.stringify(value, null, 2),
       );
     } catch (e) {
-      console.log(e);
+      this.logger.error(e);
     }
   }
 }

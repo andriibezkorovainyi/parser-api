@@ -1,4 +1,3 @@
-import { QNCoreClient } from '@quicknode/sdk';
 import { HttpService } from '@nestjs/axios';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Injectable } from '@nestjs/common';
@@ -17,17 +16,19 @@ import {
 import { AxiosInstance } from 'axios';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ContractService } from '../contract/contract.service';
+import * as assert from 'assert';
 
 @Injectable()
 export class ParserService {
   // private readonly quickRpc: QNCoreClient;
   private readonly alchemyCore: CoreNamespace;
 
-  private syncSubject: Subject<boolean>;
-  private syncSubscription: Subscription;
+  // private syncSubject: Subject<boolean>;
+  // private syncSubscription: Subscription;
 
   private readonly isMasterProcess = true; // TODO из конфига
-  private isSynchronized = false;
+  private isSynchronized: boolean;
+  private isParsing = false;
 
   constructor(
     @InjectPinoLogger(ParserService.name)
@@ -41,74 +42,62 @@ export class ParserService {
   }
 
   async initialize() {
-    this.subscribeSyncing();
-
-    await this.updateHeight();
-  }
-
-  subscribeSyncing() {
-    const observer: Observer<boolean> = {
-      next: async (isSync) => {
-        this.isSynchronized = isSync;
-
-        if (!isSync) {
-          this.startParsing();
-        }
-      },
-      error: (e) => this.logger.error(e),
-      complete: () => this.logger.info('Sync subscription completed'),
-    };
-
-    this.syncSubject?.complete();
-    this.syncSubject = new Subject<boolean>();
-
-    this.syncSubscription?.unsubscribe();
-    this.syncSubscription = this.syncSubject.subscribe(observer);
-
-    this.syncSubscription.add(() => {
-      setTimeout(() => {
-        this.logger.warn(`try reconnect subscribeCommonMessage`);
-        this.subscribeSyncing();
-      }, 5000);
-    });
+    // await this.updateHeight();
   }
 
   @Cron(CronExpression.EVERY_10_MINUTES)
   async updateHeight() {
-    // if (!this.isMasterProcess) {
-    //   return;
-    // }
+    this.logger.info('Called method --> updateHeight');
 
     const networkHeight = await this.getNetworkHeight();
+    console.log(networkHeight);
 
     if (!networkHeight) {
       throw new Error('Unable to get most recent block number from network');
     }
 
-    const setResult = await this.cacheService.setNetworkHeight(networkHeight);
+    assert(
+      (await this.cacheService.setNetworkHeight(networkHeight)) === 'OK',
+      'Unable to set most recent block number to cache',
+    );
 
-    if (setResult !== 'OK') {
-      throw new Error('Unable to set most recent block number to cache');
-    }
-
-    const pointerHeight = await this.cacheService.getPointerHeight();
+    let pointerHeight = await this.cacheService.getPointerHeight();
+    console.log(pointerHeight);
 
     if (!pointerHeight) {
+      pointerHeight = GenesisBlock;
+
       // TODO проверить высоту в базе
-      await this.cacheService.setPointerHeight(GenesisBlock);
     }
 
-    // TODO запустить парсинг
+    assert(
+      (await this.cacheService.setPointerHeight(pointerHeight)) === 'OK',
+      'Unable to set initial pointer height to cache',
+    );
+
+    this.isSynchronized = pointerHeight === networkHeight;
+
+    if (!this.isSynchronized) {
+      this.startParsing();
+    }
   }
 
   async startParsing() {
-    while (!this.isSynchronized) {
-      const { pointer, newPointer, incrementPointerBy, isSynchronized } =
-        await this.cacheService.getNewPointer();
+    this.logger.info('Called method --> startParsing');
 
-      if (isSynchronized) {
-        this.syncSubject.next(true);
-      }
+    if (this.isParsing) {
+      return;
+    }
+
+    this.isParsing = true;
+
+    while (!this.isSynchronized) {
+      this.logger.info('startParsing --> while');
+
+      const { pointer, newPointer, incrementPointerBy, isSynchronized } =
+        await this.cacheService.getNewPointerHeight();
+
+      this.isSynchronized = isSynchronized;
 
       const blockNumbers = new Array(incrementPointerBy)
         .fill(0)
@@ -121,11 +110,17 @@ export class ParserService {
 
       await this.checkUnprocessedBlocks(blocksWithContracts);
 
+      console.log(blocksWithContracts);
+
       this.contractService.saveContracts(blocksWithContracts);
     }
+
+    this.isParsing = false;
   }
 
   async getContractsForBlocks(blockNumbers: number[], count = 1000) {
+    this.logger.info('Called method --> getContractsForBlocks');
+
     const contracts: IGetBlockContractsResult[] = [];
 
     const blockContractsPromises: Promise<IGetBlockContractsResult>[] =
@@ -166,7 +161,14 @@ export class ParserService {
     );
 
     if (unprocessedBlocks.length > 0) {
-      await this.cacheService.setUnprocessedBlocks(unprocessedBlocks);
+      try {
+        await this.cacheService.setUnprocessedBlocks(unprocessedBlocks);
+      } catch (e) {
+        this.logger.error(
+          `Error setting unprocessed blocks: ${e.message}`,
+          unprocessedBlocks,
+        );
+      }
 
       if (unprocessedBlocks.length === contracts.length) {
         throw new Error('All blocks are null while');
@@ -183,6 +185,8 @@ export class ParserService {
   async getBlockContracts(
     blockNumber: number,
   ): Promise<IGetBlockContractsResult> {
+    this.logger.info('Called method --> getBlockContracts');
+
     const result = {
       blockNumber,
     } as IGetBlockContractsResult;
@@ -216,10 +220,6 @@ export class ParserService {
   }
 
   async getNetworkHeight() {
-    try {
-      return this.alchemyCore.getBlockNumber();
-    } catch (error) {
-      this.logger.error('Error getting block number:', error);
-    }
+    return this.alchemyCore.getBlockNumber();
   }
 }
