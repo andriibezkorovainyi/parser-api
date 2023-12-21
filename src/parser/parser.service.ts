@@ -23,9 +23,6 @@ export class ParserService {
   // private readonly quickRpc: QNCoreClient;
   private readonly alchemyCore: CoreNamespace;
 
-  // private syncSubject: Subject<boolean>;
-  // private syncSubscription: Subscription;
-
   private readonly isMasterProcess = true; // TODO из конфига
   private isSynchronized: boolean;
   private isParsing = false;
@@ -42,7 +39,7 @@ export class ParserService {
   }
 
   async initialize() {
-    // await this.updateHeight();
+    await this.updateHeight();
   }
 
   @Cron(CronExpression.EVERY_10_MINUTES)
