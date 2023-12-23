@@ -16,6 +16,8 @@ import { CacheModule } from '../cache/cache.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CustomLoggerModule } from '../config/custom-logger.module';
 import { CacheService } from '../cache/cache.service';
+import { HttpModuleOptions } from '@nestjs/axios';
+import { Contract } from '../database/entities/contract.entity';
 
 @Module({
   imports: [
@@ -26,11 +28,11 @@ import { CacheService } from '../cache/cache.service';
         return new DataSource(options).initialize();
       },
     }),
-    ScheduleModule.forRoot(),
     HttpModule.register({
       timeout: 5000,
       maxRedirects: 5,
-    }),
+    } as HttpModuleOptions),
+    ScheduleModule.forRoot(),
     CacheModule,
     ContractModule,
   ],

@@ -5,18 +5,24 @@ import { Observer, Subject, Subscription } from 'rxjs';
 import {
   alchemyConfig,
   AlchemyReqPerSec,
+  alchemyRpcUrls,
   GenesisBlock,
-} from '../constants/parser.constants';
+  network,
+} from '../settings/parser.settings';
 import { CacheService } from '../cache/cache.service';
 import { Alchemy, BlockWithTransactions, CoreNamespace } from 'alchemy-sdk';
-import {
-  IGetBlockContractsResult,
-  ITransactionResponse,
-} from '../utils/types/interfaces';
-import { AxiosInstance } from 'axios';
+import { IBlock, ITransactionResponse } from '../utils/types/interfaces';
+import axios, { AxiosInstance } from 'axios';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ContractService } from '../contract/contract.service';
 import * as assert from 'assert';
+import { delay } from '../utils/helpers';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Contract } from '../database/entities/contract.entity';
+import { Repository, Timestamp } from 'typeorm';
+import * as process from 'process';
+import * as path from 'path';
+import { toBigInt } from 'ethers';
 
 @Injectable()
 export class ParserService {
@@ -30,21 +36,52 @@ export class ParserService {
   constructor(
     @InjectPinoLogger(ParserService.name)
     private readonly logger: PinoLogger,
+    private readonly httpService: HttpService,
     private readonly cacheService: CacheService,
-    private httpService: HttpService,
-    private readonly contractService: ContractService,
+    private readonly contractService: ContractService, // @InjectRepository(Contract) // private readonly contractRepository: Repository<Contract>,
   ) {
-    console.log(alchemyConfig);
     this.alchemyCore = new Alchemy(alchemyConfig).core;
+    this.httpService.axiosRef.defaults.baseURL = alchemyRpcUrls[network];
   }
 
   async initialize() {
+    this.contractService.processContracts().catch((e) => this.logger.error(e));
+
+    this.processBlocks().catch((e) => this.logger.error(e));
+  }
+
+  async processBlocks() {
+    const cachedBlocks = await this.cacheService.getProcessingBlockNumbers();
+
+    if (cachedBlocks.length) {
+      await this.processCachedBlocks(cachedBlocks);
+    }
+
     await this.updateHeight();
+  }
+
+  async processCachedBlocks(blockNumbers: number[]) {
+    this.logger.debug('Called method --> processCachedBlocks');
+
+    let blocks: IBlock[] = await this.getBlocks(blockNumbers);
+    blocks = blocks.filter((block) => !block.isUnprocessed);
+
+    const processedBlockNumbers = blocks.map(({ blockNumber }) => blockNumber);
+
+    await this.contractService.saveContracts(blocks);
+
+    await this.cacheService.removeProcessedBlockNumbers(processedBlockNumbers);
+
+    const cachedBlocks = await this.cacheService.getUnprocessedBlocks();
+
+    if (!cachedBlocks.length) {
+      return;
+    }
   }
 
   @Cron(CronExpression.EVERY_10_MINUTES)
   async updateHeight() {
-    this.logger.info('Called method --> updateHeight');
+    this.logger.debug('Called method --> updateHeight');
 
     const networkHeight = await this.getNetworkHeight();
     console.log(networkHeight);
@@ -75,12 +112,12 @@ export class ParserService {
     this.isSynchronized = pointerHeight === networkHeight;
 
     if (!this.isSynchronized) {
-      this.startParsing();
+      this.startBlockParsing();
     }
   }
 
-  async startParsing() {
-    this.logger.info('Called method --> startParsing');
+  async startBlockParsing() {
+    this.logger.debug('Called method --> startParsing');
 
     if (this.isParsing) {
       return;
@@ -89,114 +126,87 @@ export class ParserService {
     this.isParsing = true;
 
     while (!this.isSynchronized) {
-      this.logger.info('startParsing --> while');
+      this.logger.debug('startParsing --> while');
 
-      const { pointer, newPointer, incrementPointerBy, isSynchronized } =
+      const { pointer, incrementPointerBy, isSynchronized } =
         await this.cacheService.getNewPointerHeight();
+
+      const blockNumbers = await this.getBlockNumbersToParse(
+        pointer,
+        incrementPointerBy,
+      );
+
+      await this.cacheService.setProcessingBlockNumbers(blockNumbers);
 
       this.isSynchronized = isSynchronized;
 
-      const blockNumbers = new Array(incrementPointerBy)
-        .fill(0)
-        .map((_, i) => pointer + i); // 100 quantity
+      let blocks: IBlock[] = await this.getBlocks(blockNumbers);
+      blocks = blocks.filter((block) => !block.isUnprocessed);
 
-      const blocksWithContracts = await this.getContractsForBlocks(
-        blockNumbers,
-        incrementPointerBy,
-      ); //
+      console.log(blocks[0].blockTimestamp);
+      if (blocks.length === 0) {
+        throw new Error('All blocks are null while fetching, check api limit');
+      }
 
-      await this.checkUnprocessedBlocks(blocksWithContracts);
+      const processedBlockNumbers = blocks.map(
+        ({ blockNumber }) => blockNumber,
+      );
 
-      console.log(blocksWithContracts);
+      await this.contractService.saveContracts(blocks);
 
-      this.contractService.saveContracts(blocksWithContracts);
+      await this.cacheService.removeProcessedBlockNumbers(
+        processedBlockNumbers,
+      );
     }
 
     this.isParsing = false;
   }
 
-  async getContractsForBlocks(blockNumbers: number[], count = 1000) {
-    this.logger.info('Called method --> getContractsForBlocks');
+  async getBlocks(blockNumbers: number[]): Promise<IBlock[]> {
+    this.logger.debug('Called method --> getBlocks');
 
-    const contracts: IGetBlockContractsResult[] = [];
+    const blocks = [];
 
-    const blockContractsPromises: Promise<IGetBlockContractsResult>[] =
-      blockNumbers.map(
-        (blockNumber) =>
-          new Promise((resolve) => {
-            resolve(this.getBlockContracts(blockNumber));
-          }),
-      );
-
-    for (let i = 0; i <= count; i += AlchemyReqPerSec) {
-      contracts.push(
-        ...(await Promise.all(
-          blockContractsPromises.slice(i, i + AlchemyReqPerSec),
-        )),
-      );
-
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-
-    return contracts;
-  }
-
-  async checkUnprocessedBlocks(contracts: IGetBlockContractsResult[]) {
-    const indexesToRemove: number[] = [];
-
-    const unprocessedBlocks: number[] = contracts.reduce(
-      (acc, { isBlockNull, blockNumber }, i) => {
-        if (isBlockNull) {
-          indexesToRemove.push(i);
-
-          return [...acc, blockNumber];
-        }
-
-        return acc;
-      },
-      [],
+    const promises: Promise<IBlock>[] = blockNumbers.map(
+      (blockNumber) =>
+        new Promise((resolve) => {
+          resolve(this.getNetworkBlock(blockNumber));
+        }),
     );
 
-    if (unprocessedBlocks.length > 0) {
-      try {
-        await this.cacheService.setUnprocessedBlocks(unprocessedBlocks);
-      } catch (e) {
-        this.logger.error(
-          `Error setting unprocessed blocks: ${e.message}`,
-          unprocessedBlocks,
-        );
-      }
+    for (let i = 0; i <= blockNumbers.length; i += AlchemyReqPerSec) {
+      blocks.push(
+        ...(await Promise.all(promises.slice(i, i + AlchemyReqPerSec))),
+      );
 
-      if (unprocessedBlocks.length === contracts.length) {
-        throw new Error('All blocks are null while');
-      }
-
-      for (let i = indexesToRemove.length - 1; i >= 0; i--) {
-        contracts.splice(indexesToRemove[i], 1);
-      }
+      await delay();
     }
 
-    return contracts;
+    return blocks;
   }
 
-  async getBlockContracts(
-    blockNumber: number,
-  ): Promise<IGetBlockContractsResult> {
-    this.logger.info('Called method --> getBlockContracts');
+  async getNetworkBlock(blockNumber: number): Promise<IBlock> {
+    this.logger.debug('Called method --> getBlock');
 
     const result = {
       blockNumber,
-    } as IGetBlockContractsResult;
+    } as IBlock;
 
     let block: BlockWithTransactions;
+
     try {
       block = await this.alchemyCore.getBlockWithTransactions(blockNumber);
+      // block = await this.getBlock(blockNumber);
     } catch (error) {
-      this.logger.error('Error getting block:', error);
+      this.logger.error(error);
+
+      if (error.status === 403) {
+        throw new Error('Get blocks rate limit reached');
+      }
     }
 
     if (!block) {
-      result.isBlockNull = true;
+      result.isUnprocessed = true;
 
       return result;
     }
@@ -204,10 +214,7 @@ export class ParserService {
     result.blockTimestamp = block.timestamp;
 
     result.contracts = block.transactions.reduce(
-      (
-        acc: Partial<ITransactionResponse>[],
-        { creates, value }: ITransactionResponse,
-      ) => {
+      (acc, { creates, value }: ITransactionResponse) => {
         return creates ? [...acc, { creates, value }] : acc;
       },
       [],
@@ -218,5 +225,30 @@ export class ParserService {
 
   async getNetworkHeight() {
     return this.alchemyCore.getBlockNumber();
+  }
+
+  async getBlock(blockNumber: number) {
+    try {
+      const res = await this.httpService.axiosRef.post('', {
+        jsonrpc: '2.0',
+        method: 'eth_getBlockByNumber',
+        params: [`0x${blockNumber.toString(16)}`, true],
+        id: 1,
+      });
+
+      console.log(res.data.result.transactions);
+      return res.data.result;
+    } catch (error) {
+      this.logger.error(error);
+    }
+  }
+
+  async getBlockNumbersToParse(
+    pointerHeight: number,
+    incrementPointerBy: number,
+  ): Promise<number[]> {
+    return new Array(incrementPointerBy)
+      .fill(0)
+      .map((_, i) => pointerHeight + i);
   }
 }

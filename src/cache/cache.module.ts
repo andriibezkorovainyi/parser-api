@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { RedisModule } from '@liaoliaots/nestjs-redis';
-import { RedisConfig } from '../constants/cache.constants';
+import { RedisConfig } from '../settings/cache.settings';
 import { RedlockModule } from '@anchan828/nest-redlock';
 import Redis from 'ioredis';
 import { CacheService } from './cache.service';

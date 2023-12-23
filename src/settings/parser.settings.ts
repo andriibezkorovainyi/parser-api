@@ -1,15 +1,22 @@
 import { AlchemySettings, Network } from 'alchemy-sdk';
 import { NetworkType } from '../utils/types/enums';
+import * as process from 'process';
 
-export const network = NetworkType.MATIC;
+export const network = NetworkType.ETH;
 
 export const EtherscanReqPerSec = 5;
 
 export const AlchemyReqPerSec = 10;
 
-export const BlocksBulk = 100;
+export const BlocksButch = 10;
+
+export const ContractsButch = 10;
 
 export const GenesisBlock = 0;
+
+export const Delay = 3000;
+
+export const InstanceId = process.env.INSTANCE_ID;
 
 export const alchemyNetworkMap = new Map<NetworkType, Network>([
   [NetworkType.ETH, Network.ETH_MAINNET],
@@ -30,6 +37,8 @@ export const alchemyConfig = {
 export const ethescanApiKeys = {
   [NetworkType.ETH]: 'SWRBEHMQ7XESVGITHJB8GPHRV3SP174A1R',
 };
+
+export const EtherscanApiKey = ethescanApiKeys[network];
 
 export const quickNodeRpcUrls = {
   [NetworkType.MATIC]:

@@ -1,7 +1,6 @@
 import { TransactionResponse } from 'alchemy-sdk';
 
 export interface IGetParseToBlockResult {
-  newPointer: number;
   pointer: number;
   isSynchronized: boolean;
   incrementPointerBy: number;
@@ -10,9 +9,23 @@ export interface IGetParseToBlockResult {
 export interface ITransactionResponse extends TransactionResponse {
   creates: string | null;
 }
-export interface IGetBlockContractsResult {
+export interface IBlock {
   blockNumber: number;
   blockTimestamp?: number;
   contracts?: Partial<ITransactionResponse>[];
-  isBlockNull?: boolean;
+  isUnprocessed?: boolean;
 }
+
+export interface IContract {
+  address: string;
+  balance?: string;
+  blockNumber: number;
+  blockTimestamp?: number;
+}
+
+// export interface IContract extends IBaseContract {
+//   name: string;
+//   sourceCode: string;
+//   isProxy?: boolean;
+//   isUnprocessed?: boolean;
+// }

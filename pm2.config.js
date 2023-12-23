@@ -3,8 +3,8 @@ module.exports = {
   apps: [
     {
       name: 'worker',
-      script: './dist/main.js',
-      instances: 'max',
+      script: './dist/parser-main.js',
+      instances: 1,
       exec_mode: 'cluster',
       env: {
         // ... APi_KEY
@@ -21,6 +21,7 @@ module.exports = {
         DATABASE_MAX_CONNECTIONS: 100,
         DATABASE_SSL_ENABLED: false,
         DATABASE_REJECT_UNAUTHORIZED: false,
+        INSTANCE_ID: 1,
       },
     },
   ],

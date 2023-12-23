@@ -3,10 +3,10 @@ import { InjectRedis } from '@liaoliaots/nestjs-redis';
 
 import { RedlockService } from '@anchan828/nest-redlock';
 import Redis from 'ioredis';
-import { RedisNumberRetries } from '../constants/cache.constants';
-import { BlocksBulk, network } from '../constants/parser.constants';
-import { IGetParseToBlockResult } from '../utils/types/interfaces';
-import { isValidResult } from '../utils/helpers';
+import { RedisNumberRetries } from '../settings/cache.settings';
+import { BlocksButch, InstanceId, network } from '../settings/parser.settings';
+import { IContract, IGetParseToBlockResult } from '../utils/types/interfaces';
+import { delay, isValidResult } from '../utils/helpers';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
 @Injectable()
@@ -31,7 +31,7 @@ export class CacheService {
     for (let i = 1; i < RedisNumberRetries + 1; i++) {
       this.logger.warn('Retry to set new pointer height in cache:', i);
 
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await delay();
 
       Object.assign(result, await this.performTransaction());
 
@@ -49,19 +49,16 @@ export class CacheService {
     const networkHeight = await this.getNetworkHeight();
 
     let pointer = NaN;
-    let newPointer = NaN;
-    let incrementPointerBy = BlocksBulk;
+    let incrementPointerBy = BlocksButch;
     let isSynchronized = false;
 
     await this.redis.watch(`${network}:pointerHeight`);
 
     pointer = await this.getPointerHeight();
-    newPointer = pointer + incrementPointerBy;
+    const newPointer = pointer + incrementPointerBy;
 
     if (newPointer > networkHeight) {
       incrementPointerBy = networkHeight - pointer;
-
-      newPointer = networkHeight;
 
       isSynchronized = true;
     }
@@ -84,7 +81,6 @@ export class CacheService {
       this.logger.error(error);
 
       incrementPointerBy = NaN;
-      newPointer = NaN;
       isSynchronized = false;
     } finally {
       await this.redis.unwatch();
@@ -92,7 +88,6 @@ export class CacheService {
 
     return {
       pointer,
-      newPointer,
       isSynchronized,
       incrementPointerBy,
     };
@@ -147,4 +142,58 @@ export class CacheService {
       this.logger.error(e);
     }
   }
+
+  async getProcessingBlockNumbers(): Promise<number[]> {
+    this.logger.debug('Called method --> getProncessingBlockNumbers');
+
+    const blockNumbers = await this.redis.lrange(
+      `${network}:InstanceId${InstanceId}:processingBlockNumbers`,
+      0,
+      99,
+    );
+
+    return blockNumbers.map(Number);
+  }
+
+  async setProcessingBlockNumbers(blockNumbers: number[] | string[]) {
+    this.logger.debug('Called method --> setProcessingBlockNumbers');
+
+    await this.redis.rpush(
+      `${network}:InstanceId${InstanceId}:processingBlockNumbers`,
+      ...blockNumbers,
+    );
+  }
+
+  async removeProcessedBlockNumbers(blockNumbers: number[]) {
+    this.logger.debug('Called method --> removeProcessedBlockNumbers');
+
+    const cached = (
+      await this.redis.lrange(
+        `${network}:InstanceId${InstanceId}:processingBlockNumbers`,
+        0,
+        -1,
+      )
+    ).filter((blockNumber) => !blockNumbers.includes(Number(blockNumber)));
+
+    await this.redis.del(
+      `${network}:InstanceId${InstanceId}:processingBlockNumbers`,
+    );
+
+    if (!cached.length) {
+      return;
+    }
+
+    await this.setProcessingBlockNumbers(cached);
+
+    if (cached.length > 5000) {
+      throw new Error('Cached block numbers less than 5000');
+    }
+  }
+
+  // async saveContracts(contracts: IBaseContract[]) {
+  //   await this.redis.rpush(
+  //     `${network}:InstanceId${InstanceId}:contracts`,
+  //     ...JSON.stringify(contracts),
+  //   );
+  // }
 }
