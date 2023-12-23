@@ -9,7 +9,7 @@ module.exports = {
       env: {
         // ... APi_KEY
         // Chain
-
+        LOG_FILE: '/var/log/parser-api/worker1.log',
         DATABASE_TYPE: 'postgres',
         DATABASE_HOST: '127.0.0.1',
         DATABASE_PORT: 5432,

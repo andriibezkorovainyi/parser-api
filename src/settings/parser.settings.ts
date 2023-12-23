@@ -8,9 +8,9 @@ export const EtherscanReqPerSec = 5;
 
 export const AlchemyReqPerSec = 10;
 
-export const BlocksButch = 10;
+export const BlocksButch = 100;
 
-export const ContractsButch = 10;
+export const ContractsButch = 100;
 
 export const GenesisBlock = 0;
 
