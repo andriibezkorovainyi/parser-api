@@ -1,9 +1,13 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { IBlock, IContract } from '../utils/types/interfaces';
+import {
+  IBlock,
+  IContract,
+  IVerifiedCodeData,
+} from '../utils/types/interfaces';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { HttpService } from '@nestjs/axios';
 import {
-  ContractsButch,
+  ContractsBatch,
   Delay,
   EtherscanApiKey,
   EtherscanReqPerSec,
@@ -18,51 +22,115 @@ import * as path from 'path';
 import { writeFile, mkdir, access, unlink } from 'node:fs/promises';
 import { Network } from '../database/entities/network.entity';
 import { NetworkType } from '../utils/types/enums';
+import axios, { AxiosInstance } from 'axios';
+import { retry } from 'rxjs';
 
 @Injectable()
 export class ContractService {
-  private isFetching = false;
-
+  private isProcessing = false;
+  private contracts: Contract[] = [];
+  private axios: AxiosInstance;
   constructor(
     @InjectPinoLogger(ContractService.name)
     private readonly logger: PinoLogger,
-    private readonly httpService: HttpService,
+    // private readonly httpService: HttpService,
     @InjectRepository(Contract)
     private readonly contractRepository: Repository<Contract>,
     @InjectRepository(Network)
     private readonly networkRepository: Repository<Network>,
   ) {
-    this.httpService.axiosRef.defaults.baseURL = 'https://api.etherscan.io/api';
-  } // private readonly contractRepository: ContractRepository,
+    this.axios = axios.create({
+      baseURL: 'https://api.etherscan.io/api',
+    });
 
-  @Cron(CronExpression.EVERY_MINUTE)
+    // this.httpService.axiosRef.defaults.baseURL = 'https://api.etherscan.io/api';
+    // this.httpService.axiosRef.defaults.maxRate = EtherscanReqPerSec;
+  }
+
   async processContracts() {
-    if (this.isFetching) {
+    this.logger.debug('Called method --> processContracts');
+
+    if (this.isProcessing) {
       return;
     }
 
-    this.isFetching = true;
+    while (true) {
+      this.logger.debug('processContracts --> while');
+      this.isProcessing = true;
 
-    const contracts = await this.getDBContracts();
-    // console.log(contracts);
+      await this.getDBContracts();
 
-    const promises: Promise<Contract>[] = contracts.map(
-      (c) => new Promise((resolve) => resolve(this.collectContractData(c))),
+      if (!this.contracts.length) {
+        await delay();
+
+        continue;
+      }
+
+      await this.collectBatchData();
+
+      await this.saveBatchData();
+
+      this.isProcessing = false;
+
+      this.contracts = [];
+    }
+  }
+
+  async collectBatchData() {
+    const promises = this.contracts.map(
+      (_, index) =>
+        new Promise((resolve) => resolve(this.collectContractData(index))),
     );
 
     for (let i = 0; i < promises.length; i += EtherscanReqPerSec) {
-      contracts.splice(
-        i,
-        EtherscanReqPerSec,
-        ...(await Promise.all(promises.slice(i, i + EtherscanReqPerSec))),
-      );
+      console.log('promises', promises.slice(i, i + EtherscanReqPerSec));
+      console.log('i', i);
+      this.logger.debug(`collectBatchData --> for ${0}`);
+
+      await Promise.all(promises.slice(i, i + EtherscanReqPerSec));
 
       await delay();
     }
+  }
 
-    const [verifiedIndeces, unverifiedIndeces] = contracts.reduce(
-      (acc, c, i) => {
-        if (c.isVerified) {
+  async collectContractData(contractIndex: number) {
+    const contract = this.contracts[contractIndex];
+
+    // const data = await this.getVerifiedCodeData(contract.address);
+    let result = await this.getVerifiedCodeData(contract.address);
+    result = await this.checkIsNeedRetry(result, contract.address, 0);
+
+    if (!result) {
+      contract.isProcessed = false;
+      contract.isVerified = null;
+      return;
+    }
+
+    const { SourceCode, ABI, ContractName } = result[0];
+
+    console.log('ABI', ABI, 'ContractName', ContractName);
+
+    if (ABI.startsWith('Contract source code not verified')) {
+      contract.isVerified = false;
+      return;
+    }
+
+    contract.isVerified = true;
+    contract.name = ContractName;
+
+    contract.filePath = await this.saveContractSourceCode(
+      contract.address,
+      ContractName,
+      SourceCode,
+    );
+  }
+
+  async saveBatchData() {
+    const [verifiedI, unverifiedI] = this.contracts.reduce(
+      (acc, contract, i) => {
+        if (contract.isVerified) {
+          acc[0].push(i);
+        } else if (contract.isVerified === null) {
           acc[0].push(i);
         } else {
           acc[1].push(i);
@@ -73,65 +141,26 @@ export class ContractService {
       [[], []],
     );
 
-    await this.contractRepository.save(
-      verifiedIndeces.map((i) => contracts[i]),
-    );
+    console.log(this.contracts);
 
-    if (unverifiedIndeces.length) {
+    const allNull = this.contracts.every((c) => c.isVerified === null);
+
+    console.log('allNull', allNull);
+    const isAllDidntProcessed = allNull && unverifiedI.length > 5;
+
+    if (isAllDidntProcessed) {
+      throw new Error(
+        'All requests to get verified code data failed. Most likely, the API key exceeded the limit.',
+      );
+    }
+
+    await this.contractRepository.save(verifiedI.map((i) => this.contracts[i]));
+
+    if (unverifiedI.length) {
       await this.contractRepository.delete(
-        unverifiedIndeces.map((i) => contracts[i].id),
+        unverifiedI.map((i) => this.contracts[i].id),
       );
     }
-  }
-
-  async getDBContracts(): Promise<Contract[]> {
-    let contracts = [];
-
-    await this.contractRepository.manager.transaction(async (manager) => {
-      contracts = await manager
-        .createQueryBuilder(Contract, 'contract')
-        .setLock('pessimistic_write')
-        .where('contract.isProcessed = :isProcessed', { isProcessed: false })
-        .andWhere('contract.isVerified = :isVerified', { isVerified: null })
-        .limit(ContractsButch)
-        .getMany();
-
-      await manager.save(
-        Contract,
-        contracts.map((c) => {
-          return {
-            id: c.id,
-            isProcessed: true,
-          };
-        }),
-      );
-    });
-
-    return contracts;
-  }
-
-  async collectContractData(contract: Contract): Promise<Contract> {
-    // console.log(contract);
-    const { SourceCode, ABI, ContractName } = await this.getVerifiedCodeData(
-      contract.address,
-    );
-    // console.log(contract);
-    if (ABI === 'Contract source code not verified') {
-      contract.isVerified = false;
-      return contract;
-    }
-
-    contract.isVerified = true;
-
-    contract.name = ContractName;
-
-    contract.filePath = await this.saveContractSourceCode(
-      contract.address,
-      ContractName,
-      SourceCode,
-    );
-
-    return contract;
   }
 
   async saveContractSourceCode(
@@ -159,11 +188,52 @@ export class ContractService {
     return filePath;
   }
 
-  async getVerifiedCodeData(address: string): Promise<any> {
-    let response;
+  // async getVerifiedCodeData(
+  //   address: string,
+  // ): Promise<IVerifiedCodeData | null> {
+  //   let result;
+  //
+  //   result = await this.getSourceCode(address);
+  //   result = await this.checkIsNeedRetry(result, address, 0);
+  //
+  //   console.log('ITS A RESULT', result[0]);
+  //
+  //   return result ? result[0] : null;
+  // }
 
+  async checkIsNeedRetry(
+    result: [IVerifiedCodeData] | string | null,
+    address: string,
+    counter: number,
+  ) {
+    if (counter > 5) {
+      return result;
+    }
+
+    if (result && typeof result === 'object') {
+      return result;
+    }
+
+    this.logger.error(result || 'Result of getSourceCode is null');
+
+    await delay();
+    result = await this.getVerifiedCodeData(address);
+
+    return await this.checkIsNeedRetry(result, address, counter + 1);
+  }
+
+  async retryGetSourceCode(address: string) {
+    const result = null;
+    const i = 0;
+
+    return result;
+  }
+
+  async getVerifiedCodeData(
+    address: string,
+  ): Promise<[IVerifiedCodeData] | null> {
     try {
-      response = await this.httpService.axiosRef.get('', {
+      const { data } = await this.axios.get('', {
         params: {
           module: 'contract',
           action: 'getsourcecode',
@@ -171,30 +241,36 @@ export class ContractService {
           apikey: EtherscanApiKey,
         },
       });
+
+      console.log('data', data);
+
+      return data.result;
     } catch (error) {
-      if (error.response.data.result.status === 403) {
-      }
-      console.log(error);
+      this.logger.error(error);
     }
 
-    return response.data.result[0];
+    return null;
   }
 
-  async formatContracts(blocks: IBlock[]): Promise<Array<IContract>> {
-    return blocks.reduce((acc, block) => {
-      if (!block.contracts || block.isUnprocessed) {
-        return acc;
-      }
+  async getDBContracts() {
+    this.logger.debug('Called method --> getDBContracts');
 
-      const _contracts = block.contracts.map(({ creates, value }) => ({
-        address: creates,
-        balance: value,
-        blockNumber: block.blockNumber,
-        blockTimestamp: block.blockTimestamp,
-      }));
+    await this.contractRepository.manager.transaction(async (manager) => {
+      this.contracts = await manager
+        .createQueryBuilder(Contract, 'contract')
+        .setLock('pessimistic_write')
+        .where('contract.isProcessed = :isProcessed', { isProcessed: false })
+        .limit(ContractsBatch)
+        .getMany();
 
-      return [...acc, ..._contracts];
-    }, []);
+      this.contracts = this.contracts.map((c) => {
+        c.isProcessed = true;
+
+        return c;
+      });
+
+      await manager.save(Contract, this.contracts);
+    });
   }
 
   async saveContracts(blocks: IBlock[]) {
@@ -213,5 +289,22 @@ export class ContractService {
         }),
       ),
     );
+  }
+
+  async formatContracts(blocks: IBlock[]): Promise<Array<IContract>> {
+    return blocks.reduce((acc, block) => {
+      if (!block.contracts || block.isUnprocessed) {
+        return acc;
+      }
+
+      const _contracts = block.contracts.map(({ creates, value }) => ({
+        address: creates,
+        balance: value,
+        blockNumber: block.blockNumber,
+        blockTimestamp: block.blockTimestamp,
+      }));
+
+      return [...acc, ..._contracts];
+    }, []);
   }
 }

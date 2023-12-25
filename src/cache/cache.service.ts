@@ -4,7 +4,7 @@ import { InjectRedis } from '@liaoliaots/nestjs-redis';
 import { RedlockService } from '@anchan828/nest-redlock';
 import Redis from 'ioredis';
 import { RedisNumberRetries } from '../settings/cache.settings';
-import { BlocksButch, InstanceId, network } from '../settings/parser.settings';
+import { BlocksBatch, InstanceId, network } from '../settings/parser.settings';
 import { IContract, IGetParseToBlockResult } from '../utils/types/interfaces';
 import { delay, isValidResult } from '../utils/helpers';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
@@ -49,7 +49,7 @@ export class CacheService {
     const networkHeight = await this.getNetworkHeight();
 
     let pointer = NaN;
-    let incrementPointerBy = BlocksButch;
+    let incrementPointerBy = BlocksBatch;
     let isSynchronized = false;
 
     await this.redis.watch(`${network}:pointerHeight`);

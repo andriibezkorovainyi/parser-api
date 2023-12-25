@@ -22,7 +22,8 @@ import { Contract } from '../database/entities/contract.entity';
 import { Repository, Timestamp } from 'typeorm';
 import * as process from 'process';
 import * as path from 'path';
-import { toBigInt } from 'ethers';
+import { ethers, toBigInt } from 'ethers';
+import { NetworkType } from '../utils/types/enums';
 
 @Injectable()
 export class ParserService {
@@ -84,7 +85,7 @@ export class ParserService {
     this.logger.debug('Called method --> updateHeight');
 
     const networkHeight = await this.getNetworkHeight();
-    console.log(networkHeight);
+    this.logger.info(`Network height ${networkHeight}`);
 
     if (!networkHeight) {
       throw new Error('Unable to get most recent block number from network');
@@ -95,19 +96,18 @@ export class ParserService {
       'Unable to set most recent block number to cache',
     );
 
-    let pointerHeight = await this.cacheService.getPointerHeight();
-    console.log(pointerHeight);
+    const pointerHeight = await this.cacheService.getPointerHeight();
+    this.logger.info(`pointerHeight ${pointerHeight}`);
 
+    // await this.cacheService.setPointerHeight(10_000_000);
     if (!pointerHeight) {
-      pointerHeight = GenesisBlock;
+      assert(
+        (await this.cacheService.setPointerHeight(GenesisBlock)) === 'OK',
+        'Unable to set initial pointer height to cache',
+      );
 
-      // TODO проверить высоту в базе
+      //  TODO проверить высоту в базе
     }
-
-    assert(
-      (await this.cacheService.setPointerHeight(pointerHeight)) === 'OK',
-      'Unable to set initial pointer height to cache',
-    );
 
     this.isSynchronized = pointerHeight === networkHeight;
 
@@ -163,8 +163,6 @@ export class ParserService {
   }
 
   async getBlocks(blockNumbers: number[]): Promise<IBlock[]> {
-    this.logger.debug('Called method --> getBlocks');
-
     const blocks = [];
 
     const promises: Promise<IBlock>[] = blockNumbers.map(
@@ -175,6 +173,7 @@ export class ParserService {
     );
 
     for (let i = 0; i <= blockNumbers.length; i += AlchemyReqPerSec) {
+      this.logger.debug(`getBlocks --> for ${i}`);
       blocks.push(
         ...(await Promise.all(promises.slice(i, i + AlchemyReqPerSec))),
       );
@@ -186,8 +185,6 @@ export class ParserService {
   }
 
   async getNetworkBlock(blockNumber: number): Promise<IBlock> {
-    this.logger.debug('Called method --> getBlock');
-
     const result = {
       blockNumber,
     } as IBlock;

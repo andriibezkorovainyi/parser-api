@@ -4,4 +4,9 @@ import { Delay } from '../settings/parser.settings';
 export const isValidResult = ({ incrementPointerBy }: IGetParseToBlockResult) =>
   !isNaN(incrementPointerBy);
 
-export const delay = () => new Promise((resolve) => setTimeout(resolve, Delay));
+export const delay = () => {
+  console.log(`Delay for ${Delay} ms`);
+  return new Promise((resolve) => {
+    setTimeout(resolve, Delay);
+  });
+};

@@ -23,6 +23,11 @@ export interface IContract {
   blockTimestamp?: number;
 }
 
+export interface IVerifiedCodeData {
+  SourceCode: string;
+  ABI: string;
+  ContractName: string;
+}
 // export interface IContract extends IBaseContract {
 //   name: string;
 //   sourceCode: string;

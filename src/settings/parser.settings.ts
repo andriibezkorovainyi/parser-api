@@ -4,13 +4,13 @@ import * as process from 'process';
 
 export const network = NetworkType.ETH;
 
-export const EtherscanReqPerSec = 5;
+export const EtherscanReqPerSec = 4;
 
 export const AlchemyReqPerSec = 10;
 
-export const BlocksButch = 100;
+export const BlocksBatch = 100;
 
-export const ContractsButch = 100;
+export const ContractsBatch = 100;
 
 export const GenesisBlock = 0;
 
