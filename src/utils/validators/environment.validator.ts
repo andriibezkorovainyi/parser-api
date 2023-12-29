@@ -20,9 +20,9 @@ enum Environment {
 export enum LogLevel {
   Error = 'error',
   Warn = 'warn',
-  Log = 'log',
+  Info = 'info',
   Debug = 'debug',
-  Verbose = 'verbose',
+  Trace = 'trace',
 }
 
 class EnvironmentVariables {
@@ -41,7 +41,7 @@ class EnvironmentVariables {
   @IsEnum(LogLevel, {
     message: `LOG_LEVEL must be one of: [${Object.values(LogLevel)}]`,
   })
-  LOG_LEVEL: string;
+  LOG_LEVEL: LogLevel;
 
   @IsNotEmpty()
   LOG_FILE: string;

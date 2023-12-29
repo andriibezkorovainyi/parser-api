@@ -4,6 +4,7 @@ import { ParserModule } from './parser/parser.module';
 import { ValidationPipe } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
 import { ParserService } from './parser/parser.service';
+import { ContractService } from './contract/contract.service';
 
 async function bootstrapParser() {
   const app = await NestFactory.create(ParserModule);
@@ -22,7 +23,6 @@ async function bootstrapParser() {
   );
 
   await app.get(ParserService).initialize();
-
-  const configService = app.get(ConfigService);
+  await app.get(ContractService).initialize();
 }
 bootstrapParser();

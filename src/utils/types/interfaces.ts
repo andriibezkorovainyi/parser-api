@@ -1,4 +1,5 @@
 import { TransactionResponse } from 'alchemy-sdk';
+import { QNGetWalletTokenBalanceResult } from '@quicknode/sdk';
 
 export interface IGetParseToBlockResult {
   pointer: number;
@@ -28,9 +29,7 @@ export interface IVerifiedCodeData {
   ABI: string;
   ContractName: string;
 }
-// export interface IContract extends IBaseContract {
-//   name: string;
-//   sourceCode: string;
-//   isProxy?: boolean;
-//   isUnprocessed?: boolean;
-// }
+
+export interface IContractBalanceData extends QNGetWalletTokenBalanceResult {
+  nativeTokenBalance?: string;
+}

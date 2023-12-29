@@ -31,13 +31,13 @@ export class CacheService {
     for (let i = 1; i < RedisNumberRetries + 1; i++) {
       this.logger.warn('Retry to set new pointer height in cache:', i);
 
-      await delay();
-
       Object.assign(result, await this.performTransaction());
 
       if (isValidResult(result)) {
         break;
       }
+
+      await delay();
     }
 
     return result;
@@ -162,6 +162,53 @@ export class CacheService {
       `${network}:InstanceId${InstanceId}:processingBlockNumbers`,
       ...blockNumbers,
     );
+  }
+
+  async setProcessingContracts(contractIds: number[] | string[]) {
+    this.logger.debug('Called method --> setProcessingContracts');
+
+    await this.redis.rpush(
+      `${network}:InstanceId${InstanceId}:processingContracts`,
+      ...contractIds,
+    );
+  }
+
+  async getProcessingContracts(): Promise<number[]> {
+    this.logger.debug('Called method --> getProcessingContracts');
+
+    const contractIds = await this.redis.lrange(
+      `${network}:InstanceId${InstanceId}:processingContracts`,
+      0,
+      -1,
+    );
+
+    return contractIds.map(Number);
+  }
+
+  async removeProcessedContracts(contractIds: number[]) {
+    this.logger.debug('Called method --> removeProcessedContracts');
+
+    const cached = (
+      await this.redis.lrange(
+        `${network}:InstanceId${InstanceId}:processingContracts`,
+        0,
+        -1,
+      )
+    ).filter((contractId) => !contractIds.includes(Number(contractId)));
+
+    await this.redis.del(
+      `${network}:InstanceId${InstanceId}:processingContracts`,
+    );
+
+    if (!cached.length) {
+      return;
+    }
+
+    await this.setProcessingContracts(cached);
+
+    if (cached.length > 5000) {
+      throw new Error('Cached contract ids less than 5000');
+    }
   }
 
   async removeProcessedBlockNumbers(blockNumbers: number[]) {

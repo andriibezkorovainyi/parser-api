@@ -1,17 +1,28 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnApplicationShutdown,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import {
   IBlock,
   IContract,
+  IContractBalanceData,
   IVerifiedCodeData,
 } from '../utils/types/interfaces';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { HttpService } from '@nestjs/axios';
 import {
+  alchemyConfig,
+  AlchemyReqPerSec,
+  apiCredentials,
   ContractsBatch,
   Delay,
-  EtherscanApiKey,
   EtherscanReqPerSec,
   network,
+  quickNConfig,
+  QuickNodeReqPerSec,
 } from '../settings/parser.settings';
 import { delay } from '../utils/helpers';
 import { Repository } from 'typeorm';
@@ -19,86 +30,258 @@ import { Contract } from '../database/entities/contract.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import * as path from 'path';
-import { writeFile, mkdir, access, unlink } from 'node:fs/promises';
+import { writeFile, mkdir, access, unlink, readFile } from 'node:fs/promises';
 import { Network } from '../database/entities/network.entity';
-import { NetworkType } from '../utils/types/enums';
-import axios, { AxiosInstance } from 'axios';
-import { retry } from 'rxjs';
+import { firstValueFrom, retry } from 'rxjs';
+import { Alchemy, CoreNamespace } from 'alchemy-sdk';
+import { ethers } from 'ethers';
+import { Core, QNCoreClient } from '@quicknode/sdk';
+import { CacheService } from '../cache/cache.service';
 
 @Injectable()
 export class ContractService {
   private isProcessing = false;
   private contracts: Contract[] = [];
-  private axios: AxiosInstance;
+
+  private readonly alchemy: CoreNamespace;
+  private readonly quickNode: QNCoreClient;
+
   constructor(
     @InjectPinoLogger(ContractService.name)
     private readonly logger: PinoLogger,
-    // private readonly httpService: HttpService,
+    private readonly httpService: HttpService,
+    private readonly cacheService: CacheService,
     @InjectRepository(Contract)
     private readonly contractRepository: Repository<Contract>,
-    @InjectRepository(Network)
-    private readonly networkRepository: Repository<Network>,
   ) {
-    this.axios = axios.create({
-      baseURL: 'https://api.etherscan.io/api',
-    });
+    this.httpService.axiosRef.defaults.baseURL = 'https://api.etherscan.io/api';
 
-    // this.httpService.axiosRef.defaults.baseURL = 'https://api.etherscan.io/api';
-    // this.httpService.axiosRef.defaults.maxRate = EtherscanReqPerSec;
+    this.alchemy = new Alchemy(alchemyConfig).core;
+    this.quickNode = new Core(quickNConfig).client;
   }
 
-  async processContracts() {
-    this.logger.debug('Called method --> processContracts');
+  async initialize() {
+    await this.processCachedContracts();
 
-    if (this.isProcessing) {
+    this.processContracts().catch((e) => this.logger.error(e));
+  }
+
+  async processCachedContracts() {
+    this.logger.info('Called method --> processCachedContracts');
+
+    const cachedContractIds = await this.cacheService.getProcessingContracts();
+
+    if (!cachedContractIds || cachedContractIds.length == 0) {
       return;
     }
 
-    while (true) {
-      this.logger.debug('processContracts --> while');
-      this.isProcessing = true;
+    const contracts = await this.contractRepository
+      .createQueryBuilder('contract')
+      .where('contract.id IN (:...ids)', { ids: cachedContractIds })
+      .getMany();
 
-      await this.getDBContracts();
-
-      if (!this.contracts.length) {
-        await delay();
-
-        continue;
-      }
+    for (let i = 0; i < contracts.length; i += EtherscanReqPerSec) {
+      this.contracts = contracts.slice(i, i + EtherscanReqPerSec);
 
       await this.collectBatchData();
 
       await this.saveBatchData();
 
-      this.isProcessing = false;
+      await delay();
+    }
+
+    this.contracts = [];
+
+    await this.removeProcessedContracts(cachedContractIds);
+  }
+
+  private async processContracts() {
+    this.logger.info('Called method --> processContracts');
+
+    if (this.isProcessing) {
+      return;
+    }
+
+    this.isProcessing = true;
+
+    while (this.isProcessing) {
+      this.logger.info('processContracts --> while');
+
+      await this.getDBContracts();
+
+      if (this.contracts.length == 0) {
+        await delay(10_000);
+
+        continue;
+      }
+
+      await this.setProcessingContracts();
+
+      await this.collectBatchData();
+
+      await this.saveBatchData();
+
+      await this.removeProcessedContracts();
+
+      const isAllDidntProcessed =
+        this.contracts.length > 0
+          ? this.contracts.every((c) => c.isVerified === null)
+          : false;
+
+      if (isAllDidntProcessed) {
+        throw new Error(
+          'All requests to get verified code data failed. Most likely, the API key exceeded the limit.',
+        );
+      }
 
       this.contracts = [];
+
+      await delay(1000);
     }
+  }
+
+  async removeProcessedContracts(contractIds?: number[]) {
+    await this.cacheService.removeProcessedContracts(
+      contractIds || this.contracts.map((c) => c.id),
+    );
+  }
+
+  async setProcessingContracts() {
+    const contractIds = this.contracts.map((c) => c.id);
+
+    await this.cacheService.setProcessingContracts(contractIds);
   }
 
   async collectBatchData() {
-    const promises = this.contracts.map(
-      (_, index) =>
-        new Promise((resolve) => resolve(this.collectContractData(index))),
-    );
+    for (let i = 0; i < this.contracts.length; i += EtherscanReqPerSec) {
+      const take = i + EtherscanReqPerSec;
 
-    for (let i = 0; i < promises.length; i += EtherscanReqPerSec) {
-      console.log('promises', promises.slice(i, i + EtherscanReqPerSec));
-      console.log('i', i);
-      this.logger.debug(`collectBatchData --> for ${0}`);
+      const promises = this.contracts
+        .slice(i, take)
+        .map(
+          (_, index) =>
+            new Promise((resolve) =>
+              resolve(this.collectVerifiedCodeData(index)),
+            ),
+        );
 
-      await Promise.all(promises.slice(i, i + EtherscanReqPerSec));
+      await Promise.all(promises);
 
-      await delay();
+      if (take < this.contracts.length) {
+        await delay();
+      }
+    }
+
+    const verifiedContracts = this.contracts.filter((c) => c.isVerified);
+
+    for (let i = 0; i < verifiedContracts.length; i += QuickNodeReqPerSec) {
+      const take = i + QuickNodeReqPerSec;
+
+      const promises = verifiedContracts
+        .slice(i, take)
+        .map(
+          (contract) =>
+            new Promise((resolve) =>
+              resolve(this.collectBalanceData(contract)),
+            ),
+        );
+
+      await Promise.all(promises);
+
+      if (take < verifiedContracts.length) {
+        await delay();
+      }
     }
   }
 
-  async collectContractData(contractIndex: number) {
+  async getSourceCode() {
+    const contract = await this.contractRepository.findOne({
+      where: { isVerified: true },
+    });
+    const baseDir = path.join(__dirname, '../../contracts');
+
+    console.log(await readFile(path.join(baseDir, contract.filePath), 'utf8'));
+  }
+
+  async collectBalanceData(contract: Contract) {
+    if (contract.balance !== null || contract.tokenHoldings !== null) {
+      return;
+    }
+
+    let data = await this.getContractBalanceData(contract.address);
+    data = await this.checkContractBalanceNeedRetry(data, contract.address, 0);
+
+    if (!data) {
+      return;
+    }
+
+    const { nativeTokenBalance, result } = data;
+
+    contract.balance = parseFloat(nativeTokenBalance);
+
+    contract.tokenHoldings = result.map(
+      ({ name, totalBalance, address, decimals }) => ({
+        name,
+        address,
+        balance: parseFloat(ethers.formatUnits(totalBalance, Number(decimals))),
+      }),
+    );
+  }
+
+  async checkContractBalanceNeedRetry(
+    result: IContractBalanceData | null,
+    address: string,
+    counter: number,
+  ) {
+    if (counter > 5) {
+      return result;
+    }
+
+    if (result && result.nativeTokenBalance && result.result) {
+      return result;
+    }
+
+    this.logger.error(result || 'Result of getContractBalanceData is null');
+
+    await delay();
+
+    result = await this.getContractBalanceData(address);
+
+    return await this.checkContractBalanceNeedRetry(
+      result,
+      address,
+      counter + 1,
+    );
+  }
+
+  async getContractBalanceData(
+    contractAddress: string,
+  ): Promise<IContractBalanceData | null> {
+    let result = null;
+
+    try {
+      result = await this.quickNode.qn_getWalletTokenBalance({
+        wallet: contractAddress as `0x${string}`,
+        perPage: 100,
+      });
+    } catch (error) {
+      this.logger.error(error);
+    }
+
+    return result;
+  }
+
+  async collectVerifiedCodeData(contractIndex: number) {
+    this.logger.info('Called method --> collectVerifiedCodeData');
     const contract = this.contracts[contractIndex];
 
-    // const data = await this.getVerifiedCodeData(contract.address);
+    if (contract.isVerified !== null) {
+      contract.isProcessed = true;
+      return;
+    }
+
     let result = await this.getVerifiedCodeData(contract.address);
-    result = await this.checkIsNeedRetry(result, contract.address, 0);
+    result = await this.checkVerifiedCodeNeedRetry(result, contract.address, 0);
 
     if (!result) {
       contract.isProcessed = false;
@@ -107,8 +290,6 @@ export class ContractService {
     }
 
     const { SourceCode, ABI, ContractName } = result[0];
-
-    console.log('ABI', ABI, 'ContractName', ContractName);
 
     if (ABI.startsWith('Contract source code not verified')) {
       contract.isVerified = false;
@@ -141,19 +322,6 @@ export class ContractService {
       [[], []],
     );
 
-    console.log(this.contracts);
-
-    const allNull = this.contracts.every((c) => c.isVerified === null);
-
-    console.log('allNull', allNull);
-    const isAllDidntProcessed = allNull && unverifiedI.length > 5;
-
-    if (isAllDidntProcessed) {
-      throw new Error(
-        'All requests to get verified code data failed. Most likely, the API key exceeded the limit.',
-      );
-    }
-
     await this.contractRepository.save(verifiedI.map((i) => this.contracts[i]));
 
     if (unverifiedI.length) {
@@ -168,40 +336,29 @@ export class ContractService {
     name: string,
     sourceCode: string,
   ): Promise<string> {
-    const addressFormatted = address.slice(2);
-    const prefix = addressFormatted.slice(0, 2);
+    const addressFormatted = address.slice(2).toLowerCase();
+    const prefix = addressFormatted.slice(0, 2).toLowerCase();
     const baseDir = path.join(__dirname, '../../contracts');
-    const prefixDir = path.join(baseDir, network, prefix);
+    const prefixDir = path.join(baseDir, network.toLowerCase(), prefix);
 
     if (access(prefixDir).catch(() => false)) {
       await mkdir(prefixDir, { recursive: true });
     }
 
     const filePath = path.join(
-      network,
+      network.toLowerCase(),
       prefix,
       `${addressFormatted}_${name}.sol`,
     );
 
-    await writeFile(path.join(baseDir, filePath), sourceCode);
+    await access(path.join(baseDir, filePath)).catch(
+      async () => await writeFile(path.join(baseDir, filePath), sourceCode),
+    );
 
     return filePath;
   }
 
-  // async getVerifiedCodeData(
-  //   address: string,
-  // ): Promise<IVerifiedCodeData | null> {
-  //   let result;
-  //
-  //   result = await this.getSourceCode(address);
-  //   result = await this.checkIsNeedRetry(result, address, 0);
-  //
-  //   console.log('ITS A RESULT', result[0]);
-  //
-  //   return result ? result[0] : null;
-  // }
-
-  async checkIsNeedRetry(
+  async checkVerifiedCodeNeedRetry(
     result: [IVerifiedCodeData] | string | null,
     address: string,
     counter: number,
@@ -217,9 +374,10 @@ export class ContractService {
     this.logger.error(result || 'Result of getSourceCode is null');
 
     await delay();
+
     result = await this.getVerifiedCodeData(address);
 
-    return await this.checkIsNeedRetry(result, address, counter + 1);
+    return await this.checkVerifiedCodeNeedRetry(result, address, counter + 1);
   }
 
   async retryGetSourceCode(address: string) {
@@ -233,18 +391,18 @@ export class ContractService {
     address: string,
   ): Promise<[IVerifiedCodeData] | null> {
     try {
-      const { data } = await this.axios.get('', {
-        params: {
-          module: 'contract',
-          action: 'getsourcecode',
-          address,
-          apikey: EtherscanApiKey,
-        },
-      });
+      const response = await firstValueFrom(
+        this.httpService.get('', {
+          params: {
+            module: 'contract',
+            action: 'getsourcecode',
+            address,
+            apikey: apiCredentials.etherscanApiKey,
+          },
+        }),
+      );
 
-      console.log('data', data);
-
-      return data.result;
+      return response.data.result;
     } catch (error) {
       this.logger.error(error);
     }
@@ -253,31 +411,27 @@ export class ContractService {
   }
 
   async getDBContracts() {
-    this.logger.debug('Called method --> getDBContracts');
+    this.logger.info('Called method --> getDBContracts');
 
     await this.contractRepository.manager.transaction(async (manager) => {
       this.contracts = await manager
         .createQueryBuilder(Contract, 'contract')
         .setLock('pessimistic_write')
         .where('contract.isProcessed = :isProcessed', { isProcessed: false })
+        // .where('contract.isVerified is null')
         .limit(ContractsBatch)
         .getMany();
 
-      this.contracts = this.contracts.map((c) => {
+      this.contracts.forEach((c) => {
         c.isProcessed = true;
-
-        return c;
       });
 
       await manager.save(Contract, this.contracts);
     });
   }
 
-  async saveContracts(blocks: IBlock[]) {
+  async saveContracts(blocks: IBlock[], network: Network) {
     const contracts: IContract[] = await this.formatContracts(blocks);
-    const _network = await this.networkRepository.findOne({
-      where: { name: network },
-    });
 
     await this.contractRepository.insert(
       contracts.map((c) =>
@@ -285,7 +439,7 @@ export class ContractService {
           address: c.address,
           blockNumber: c.blockNumber,
           blockTimestamp: new Date(c.blockTimestamp * 1000),
-          network: _network,
+          network,
         }),
       ),
     );
@@ -306,5 +460,11 @@ export class ContractService {
 
       return [...acc, ..._contracts];
     }, []);
+  }
+
+  async getLatestBlock(): Promise<number> {
+    return this.contractRepository
+      .findOne({ order: { blockNumber: 'DESC' } })
+      .then((c) => c.blockNumber);
   }
 }

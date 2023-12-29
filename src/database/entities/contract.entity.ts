@@ -33,11 +33,11 @@ export class Contract {
   @Column({ nullable: true })
   name: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'decimal', precision: 18, scale: 8, nullable: true })
   balance: number;
 
   @Column('json', { nullable: true })
-  tokenHoldings: Record<string, number>;
+  tokenHoldings: Array<Record<string, any>>;
 
   @Column({ nullable: true })
   filePath: string;

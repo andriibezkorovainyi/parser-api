@@ -1,54 +1,51 @@
 import { AlchemySettings, Network } from 'alchemy-sdk';
 import { NetworkType } from '../utils/types/enums';
 import * as process from 'process';
+import * as dotenv from 'dotenv';
+dotenv.config();
 
-export const network = NetworkType.ETH;
+console.log('process.env.LOG_LEVEL', process.env.LOG_LEVEL);
 
-export const EtherscanReqPerSec = 4;
+export const network = NetworkType[process.env.NETWORK];
+
+export const EtherscanReqPerSec = 5;
 
 export const AlchemyReqPerSec = 10;
 
+export const QuickNodeReqPerSec = 5;
+
 export const BlocksBatch = 100;
 
-export const ContractsBatch = 100;
+export const ContractsBatch = 5;
 
 export const GenesisBlock = 0;
 
 export const Delay = 3000;
 
-export const InstanceId = process.env.INSTANCE_ID;
+export const InstanceId = Number(process.env.INSTANCE_ID);
+
+export const apiCredentials = {
+  alchemyApiKey: process.env[`${network}_${InstanceId}_ALCHEMY_API_KEY`],
+  etherscanApiKey: process.env[`${network}_${InstanceId}_ETHERSCAN_API_KEY`],
+  quickNodeEndpointUrl:
+    process.env[`${network}_${InstanceId}_QUICKNODE_ENDPOINT_URL`],
+};
 
 export const alchemyNetworkMap = new Map<NetworkType, Network>([
   [NetworkType.ETH, Network.ETH_MAINNET],
   [NetworkType.MATIC, Network.MATIC_MAINNET],
 ]);
 
-export const alchemyRpcUrls = {
-  [NetworkType.MATIC]:
-    'https://polygon-mainnet.g.alchemy.com/v2/qvQNC3CnlMPud9U3o-wqhSK6QIkQYfCZ',
-  [NetworkType.ETH]:
-    'https://eth-mainnet.g.alchemy.com/v2/qvQNC3CnlMPud9U3o-wqhSK6QIkQYfCZ',
-};
 export const alchemyConfig = {
-  apiKey: 'qvQNC3CnlMPud9U3o-wqhSK6QIkQYfCZ',
+  apiKey: apiCredentials.alchemyApiKey,
   network: alchemyNetworkMap.get(network),
 } as AlchemySettings;
 
-export const ethescanApiKeys = {
-  [NetworkType.ETH]: 'SWRBEHMQ7XESVGITHJB8GPHRV3SP174A1R',
-};
-
-export const EtherscanApiKey = ethescanApiKeys[network];
-
-export const quickNodeRpcUrls = {
-  [NetworkType.MATIC]:
-    'https://skilled-blissful-sound.matic.quiknode.pro/fbe4054257e029a987244b7ddc7910d72d36d994/',
-  [NetworkType.ETH]:
-    'https://frequent-wandering-tree.quiknode.pro/7fe156e00faf37497f60c9b16f4a0466d64fc9d6/',
-};
-
 export const quickNConfig = {
-  endpointUrl: quickNodeRpcUrls.ETH,
+  endpointUrl: apiCredentials.quickNodeEndpointUrl,
+  config: {
+    addOns: {
+      nftTokenV2: true,
+    },
+  },
 };
-
-export const axiosConfig = {};

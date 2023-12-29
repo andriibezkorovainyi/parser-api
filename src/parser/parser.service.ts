@@ -1,52 +1,52 @@
 import { HttpService } from '@nestjs/axios';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Injectable } from '@nestjs/common';
-import { Observer, Subject, Subscription } from 'rxjs';
-import {
-  alchemyConfig,
-  AlchemyReqPerSec,
-  alchemyRpcUrls,
-  GenesisBlock,
-  network,
-} from '../settings/parser.settings';
 import { CacheService } from '../cache/cache.service';
 import { Alchemy, BlockWithTransactions, CoreNamespace } from 'alchemy-sdk';
 import { IBlock, ITransactionResponse } from '../utils/types/interfaces';
-import axios, { AxiosInstance } from 'axios';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ContractService } from '../contract/contract.service';
 import * as assert from 'assert';
 import { delay } from '../utils/helpers';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Contract } from '../database/entities/contract.entity';
-import { Repository, Timestamp } from 'typeorm';
-import * as process from 'process';
-import * as path from 'path';
-import { ethers, toBigInt } from 'ethers';
-import { NetworkType } from '../utils/types/enums';
+import { Network } from '../database/entities/network.entity';
+import { Repository } from 'typeorm';
+import {
+  alchemyConfig,
+  AlchemyReqPerSec,
+  GenesisBlock,
+  InstanceId,
+  network,
+} from '../settings/parser.settings';
 
 @Injectable()
 export class ParserService {
-  // private readonly quickRpc: QNCoreClient;
   private readonly alchemyCore: CoreNamespace;
 
-  private readonly isMasterProcess = true; // TODO из конфига
   private isSynchronized: boolean;
   private isParsing = false;
+  private network: Network;
+  private readonly instanceId = InstanceId;
 
   constructor(
     @InjectPinoLogger(ParserService.name)
     private readonly logger: PinoLogger,
-    private readonly httpService: HttpService,
     private readonly cacheService: CacheService,
-    private readonly contractService: ContractService, // @InjectRepository(Contract) // private readonly contractRepository: Repository<Contract>,
+    private readonly contractService: ContractService,
+    @InjectRepository(Network)
+    private readonly networkRepository: Repository<Network>,
   ) {
     this.alchemyCore = new Alchemy(alchemyConfig).core;
-    this.httpService.axiosRef.defaults.baseURL = alchemyRpcUrls[network];
   }
 
   async initialize() {
-    this.contractService.processContracts().catch((e) => this.logger.error(e));
+    this.network = await this.networkRepository.findOne({
+      where: { name: network },
+    });
+
+    if (!this.network) {
+      this.network = await this.networkRepository.save({ name: network });
+    }
 
     this.processBlocks().catch((e) => this.logger.error(e));
   }
@@ -62,14 +62,14 @@ export class ParserService {
   }
 
   async processCachedBlocks(blockNumbers: number[]) {
-    this.logger.debug('Called method --> processCachedBlocks');
+    this.logger.info('Called method --> processCachedBlocks');
 
     let blocks: IBlock[] = await this.getBlocks(blockNumbers);
     blocks = blocks.filter((block) => !block.isUnprocessed);
 
     const processedBlockNumbers = blocks.map(({ blockNumber }) => blockNumber);
 
-    await this.contractService.saveContracts(blocks);
+    await this.contractService.saveContracts(blocks, this.network);
 
     await this.cacheService.removeProcessedBlockNumbers(processedBlockNumbers);
 
@@ -82,7 +82,11 @@ export class ParserService {
 
   @Cron(CronExpression.EVERY_10_MINUTES)
   async updateHeight() {
-    this.logger.debug('Called method --> updateHeight');
+    if (this.instanceId !== 1) {
+      return;
+    }
+
+    this.logger.info('Called method --> updateHeight');
 
     const networkHeight = await this.getNetworkHeight();
     this.logger.info(`Network height ${networkHeight}`);
@@ -96,18 +100,19 @@ export class ParserService {
       'Unable to set most recent block number to cache',
     );
 
-    const pointerHeight = await this.cacheService.getPointerHeight();
-    this.logger.info(`pointerHeight ${pointerHeight}`);
+    let pointerHeight = await this.cacheService.getPointerHeight();
 
-    // await this.cacheService.setPointerHeight(10_000_000);
     if (!pointerHeight) {
+      const dbLatestBlock = await this.contractService.getLatestBlock();
+      pointerHeight = dbLatestBlock || GenesisBlock;
+
       assert(
-        (await this.cacheService.setPointerHeight(GenesisBlock)) === 'OK',
+        (await this.cacheService.setPointerHeight(pointerHeight)) === 'OK',
         'Unable to set initial pointer height to cache',
       );
-
-      //  TODO проверить высоту в базе
     }
+
+    this.logger.info(`pointerHeight ${pointerHeight}`);
 
     this.isSynchronized = pointerHeight === networkHeight;
 
@@ -117,7 +122,7 @@ export class ParserService {
   }
 
   async startBlockParsing() {
-    this.logger.debug('Called method --> startParsing');
+    this.logger.info('Called method --> startParsing');
 
     if (this.isParsing) {
       return;
@@ -126,7 +131,7 @@ export class ParserService {
     this.isParsing = true;
 
     while (!this.isSynchronized) {
-      this.logger.debug('startParsing --> while');
+      this.logger.info('startParsing --> while');
 
       const { pointer, incrementPointerBy, isSynchronized } =
         await this.cacheService.getNewPointerHeight();
@@ -152,11 +157,15 @@ export class ParserService {
         ({ blockNumber }) => blockNumber,
       );
 
-      await this.contractService.saveContracts(blocks);
+      await this.contractService.saveContracts(blocks, this.network);
 
       await this.cacheService.removeProcessedBlockNumbers(
         processedBlockNumbers,
       );
+
+      if (!this.isSynchronized) {
+        this.logger.info('Parser service stopped');
+      }
     }
 
     this.isParsing = false;
@@ -165,18 +174,18 @@ export class ParserService {
   async getBlocks(blockNumbers: number[]): Promise<IBlock[]> {
     const blocks = [];
 
-    const promises: Promise<IBlock>[] = blockNumbers.map(
-      (blockNumber) =>
-        new Promise((resolve) => {
-          resolve(this.getNetworkBlock(blockNumber));
-        }),
-    );
-
     for (let i = 0; i <= blockNumbers.length; i += AlchemyReqPerSec) {
-      this.logger.debug(`getBlocks --> for ${i}`);
-      blocks.push(
-        ...(await Promise.all(promises.slice(i, i + AlchemyReqPerSec))),
-      );
+      const promises: Promise<IBlock>[] = blockNumbers
+        .slice(i, i + AlchemyReqPerSec)
+        .map(
+          (blockNumber) =>
+            new Promise((resolve) => {
+              resolve(this.getNetworkBlock(blockNumber));
+            }),
+        );
+
+      this.logger.info(`getBlocks --> for ${i}`);
+      blocks.push(...(await Promise.all(promises)));
 
       await delay();
     }
@@ -222,22 +231,6 @@ export class ParserService {
 
   async getNetworkHeight() {
     return this.alchemyCore.getBlockNumber();
-  }
-
-  async getBlock(blockNumber: number) {
-    try {
-      const res = await this.httpService.axiosRef.post('', {
-        jsonrpc: '2.0',
-        method: 'eth_getBlockByNumber',
-        params: [`0x${blockNumber.toString(16)}`, true],
-        id: 1,
-      });
-
-      console.log(res.data.result.transactions);
-      return res.data.result;
-    } catch (error) {
-      this.logger.error(error);
-    }
   }
 
   async getBlockNumbersToParse(

@@ -18,6 +18,7 @@ import { CustomLoggerModule } from '../config/custom-logger.module';
 import { CacheService } from '../cache/cache.service';
 import { HttpModuleOptions } from '@nestjs/axios';
 import { Contract } from '../database/entities/contract.entity';
+import { Network } from '../database/entities/network.entity';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { Contract } from '../database/entities/contract.entity';
         return new DataSource(options).initialize();
       },
     }),
+    TypeOrmModule.forFeature([Network]),
     HttpModule.register({
       timeout: 5000,
       maxRedirects: 5,
