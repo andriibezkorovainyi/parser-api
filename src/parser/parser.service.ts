@@ -59,6 +59,8 @@ export class ParserService {
   async processBlocks() {
     const cachedBlocks = await this.cacheService.getProcessingBlockNumbers();
 
+    console.log('cachedBlocks', cachedBlocks);
+
     if (cachedBlocks.length) {
       await this.processCachedBlocks(cachedBlocks);
     }
