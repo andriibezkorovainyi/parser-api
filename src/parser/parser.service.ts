@@ -241,9 +241,10 @@ export class ParserService {
 
   async getNetworkHeight() {
     try {
-      return this.alchemyCore.getBlockNumber();
+      return await this.alchemyCore.getBlockNumber();
     } catch (error) {
       this.logger.error(error);
+      return null;
     }
   }
 

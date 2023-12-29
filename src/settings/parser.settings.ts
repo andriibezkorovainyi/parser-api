@@ -41,6 +41,8 @@ export const alchemyConfig = {
   network: alchemyNetworkMap.get(network),
 } as AlchemySettings;
 
+console.log('alchemyConfig', alchemyConfig);
+
 export const quickNConfig = {
   endpointUrl: apiCredentials.quickNodeEndpointUrl,
   config: {
