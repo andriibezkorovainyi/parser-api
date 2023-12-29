@@ -471,8 +471,11 @@ export class ContractService {
   }
 
   async getLatestBlock(): Promise<number> {
-    return this.contractRepository
-      .findOne({ order: { blockNumber: 'DESC' } })
-      .then((c) => c.blockNumber);
+    const latestContract = await this.contractRepository
+      .createQueryBuilder('contract')
+      .orderBy('contract.blockNumber', 'DESC')
+      .getOne();
+
+    return latestContract ? latestContract.blockNumber : 0;
   }
 }
