@@ -106,9 +106,13 @@ export class ParserService {
 
     let pointerHeight = await this.cacheService.getPointerHeight();
 
+    console.log('initial pointerHeight', pointerHeight);
+
     if (!pointerHeight && this.instanceId === 1) {
       const dbLatestBlock = await this.contractService.getLatestBlock();
       pointerHeight = dbLatestBlock || GenesisBlock;
+
+      console.log('after checks pointerHeight', pointerHeight);
 
       assert(
         (await this.cacheService.setPointerHeight(pointerHeight)) === 'OK',
