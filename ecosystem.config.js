@@ -12,6 +12,8 @@ module.exports = {
         ...process.env,
         INSTANCE_ID: 1,
         NETWORK: 'ETH',
+        LOG_FILE: './log/worker-eth-1.log',
+        NODE_ENV: 'production',
       },
     },
   ],

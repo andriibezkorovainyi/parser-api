@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRedis } from '@liaoliaots/nestjs-redis';
 
 import { RedlockService } from '@anchan828/nest-redlock';
@@ -8,17 +8,23 @@ import { BlocksBatch, InstanceId, network } from '../settings/parser.settings';
 import { IContract, IGetParseToBlockResult } from '../utils/types/interfaces';
 import { delay, isValidResult } from '../utils/helpers';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import {
+  WINSTON_MODULE_NEST_PROVIDER,
+  WINSTON_MODULE_PROVIDER,
+} from 'nest-winston';
 
 @Injectable()
 export class CacheService {
   constructor(
-    @InjectPinoLogger(CacheService.name)
+    // @InjectPinoLogger(CacheService.name)
+    @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: PinoLogger,
+    // private readonly logger: Logger,
     @InjectRedis() private readonly redis: Redis,
   ) {}
 
   async getNewPointerHeight(): Promise<IGetParseToBlockResult> {
-    this.logger.info('Called method --> getNewPointerHeight');
+    this.logger.debug('Called method --> getNewPointerHeight');
 
     const result = {} as IGetParseToBlockResult;
 
@@ -44,7 +50,7 @@ export class CacheService {
   }
 
   async performTransaction(): Promise<IGetParseToBlockResult> {
-    this.logger.info('Called method --> performTransaction');
+    this.logger.debug('Called method --> performTransaction');
 
     const networkHeight = await this.getNetworkHeight();
 

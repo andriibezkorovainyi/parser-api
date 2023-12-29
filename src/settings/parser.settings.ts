@@ -18,7 +18,7 @@ export const BlocksBatch = 100;
 
 export const ContractsBatch = 5;
 
-export const GenesisBlock = 0;
+export const GenesisBlock = 1_000_000;
 
 export const Delay = 3000;
 

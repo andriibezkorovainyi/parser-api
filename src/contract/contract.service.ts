@@ -1,4 +1,5 @@
 import {
+  Inject,
   Injectable,
   Logger,
   OnApplicationShutdown,
@@ -37,6 +38,10 @@ import { Alchemy, CoreNamespace } from 'alchemy-sdk';
 import { ethers } from 'ethers';
 import { Core, QNCoreClient } from '@quicknode/sdk';
 import { CacheService } from '../cache/cache.service';
+import {
+  WINSTON_MODULE_NEST_PROVIDER,
+  WINSTON_MODULE_PROVIDER,
+} from 'nest-winston';
 
 @Injectable()
 export class ContractService {
@@ -47,8 +52,11 @@ export class ContractService {
   private readonly quickNode: QNCoreClient;
 
   constructor(
-    @InjectPinoLogger(ContractService.name)
-    private readonly logger: PinoLogger,
+    // @InjectPinoLogger(ContractService.name)
+    @Inject(WINSTON_MODULE_NEST_PROVIDER)
+    private readonly logger: Logger,
+    // @Inject(WINSTON_MODULE_PROVIDER)
+    // private readonly logger: Logger,
     private readonly httpService: HttpService,
     private readonly cacheService: CacheService,
     @InjectRepository(Contract)
@@ -67,7 +75,7 @@ export class ContractService {
   }
 
   async processCachedContracts() {
-    this.logger.info('Called method --> processCachedContracts');
+    this.logger.debug('Called method --> processCachedContracts');
 
     const cachedContractIds = await this.cacheService.getProcessingContracts();
 
@@ -96,7 +104,7 @@ export class ContractService {
   }
 
   private async processContracts() {
-    this.logger.info('Called method --> processContracts');
+    this.logger.debug('Called method --> processContracts');
 
     if (this.isProcessing) {
       return;
@@ -105,7 +113,7 @@ export class ContractService {
     this.isProcessing = true;
 
     while (this.isProcessing) {
-      this.logger.info('processContracts --> while');
+      this.logger.debug('processContracts --> while');
 
       await this.getDBContracts();
 
@@ -272,7 +280,7 @@ export class ContractService {
   }
 
   async collectVerifiedCodeData(contractIndex: number) {
-    this.logger.info('Called method --> collectVerifiedCodeData');
+    this.logger.debug('Called method --> collectVerifiedCodeData');
     const contract = this.contracts[contractIndex];
 
     if (contract.isVerified !== null) {
@@ -411,7 +419,7 @@ export class ContractService {
   }
 
   async getDBContracts() {
-    this.logger.info('Called method --> getDBContracts');
+    this.logger.debug('Called method --> getDBContracts');
 
     await this.contractRepository.manager.transaction(async (manager) => {
       this.contracts = await manager
