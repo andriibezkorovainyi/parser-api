@@ -97,6 +97,10 @@ export class ParserService {
       networkHeight = await this.getNetworkHeight();
 
       if (!networkHeight) {
+        networkHeight = await this.retryGetNetworkHeight(networkHeight);
+      }
+
+      if (!networkHeight) {
         throw new Error('Unable to get most recent block number from network');
       }
 
@@ -130,6 +134,27 @@ export class ParserService {
     if (!this.isSynchronized) {
       this.startBlockParsing();
     }
+  }
+
+  async retryGetNetworkHeight(networkHeight: number) {
+    let newNetworkHeight = networkHeight;
+
+    for (let i = 0; i < 5; i++) {
+      try {
+        await delay();
+
+        newNetworkHeight = await this.getNetworkHeight();
+
+        if (newNetworkHeight) {
+          break;
+        }
+      } catch (e) {
+        this.logger.error(e);
+        await delay();
+      }
+    }
+
+    return newNetworkHeight;
   }
 
   async startBlockParsing() {
