@@ -240,7 +240,11 @@ export class ParserService {
   }
 
   async getNetworkHeight() {
-    return this.alchemyCore.getBlockNumber();
+    try {
+      return this.alchemyCore.getBlockNumber();
+    } catch (error) {
+      this.logger.error(error);
+    }
   }
 
   async getBlockNumbersToParse(
