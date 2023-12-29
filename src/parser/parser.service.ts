@@ -93,7 +93,6 @@ export class ParserService {
 
     if (this.instanceId === 1) {
       networkHeight = await this.getNetworkHeight();
-      this.logger.debug(`Network height ${networkHeight}`);
 
       if (!networkHeight) {
         throw new Error('Unable to get most recent block number from network');
@@ -117,7 +116,8 @@ export class ParserService {
       );
     }
 
-    this.logger.debug(`pointerHeight ${pointerHeight}`);
+    this.logger.log(`Network height ${networkHeight}`);
+    this.logger.log(`pointerHeight ${pointerHeight}`);
 
     this.isSynchronized = pointerHeight === networkHeight;
 
