@@ -59,8 +59,6 @@ export class ParserService {
   async processBlocks() {
     const cachedBlocks = await this.cacheService.getProcessingBlockNumbers();
 
-    console.log('cachedBlocks', cachedBlocks);
-
     if (cachedBlocks.length) {
       await this.processCachedBlocks(cachedBlocks);
     }
@@ -92,6 +90,8 @@ export class ParserService {
     this.logger.debug('Called method --> updateHeight');
 
     let networkHeight = await this.cacheService.getNetworkHeight();
+    console.log('networkHeight', networkHeight);
+    console.log('this.instanceId', this.instanceId);
 
     if (this.instanceId === 1) {
       networkHeight = await this.getNetworkHeight();
