@@ -16,5 +16,17 @@ module.exports = {
         NODE_ENV: 'production',
       },
     },
+    {
+      name: 'worker-eth-2',
+      script: './dist/parser-main.js',
+      instances: 1,
+      env: {
+        ...process.env,
+        INSTANCE_ID: 2,
+        NETWORK: 'ETH',
+        LOG_FILE: './log/worker-eth-2.log',
+        NODE_ENV: 'production',
+      },
+    },
   ],
 };

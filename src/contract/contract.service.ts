@@ -71,7 +71,7 @@ export class ContractService {
   async initialize() {
     await this.processCachedContracts();
 
-    this.processContracts().catch((e) => this.logger.error(e));
+    this.processContracts();
   }
 
   async processCachedContracts() {
@@ -421,21 +421,26 @@ export class ContractService {
   async getDBContracts() {
     this.logger.debug('Called method --> getDBContracts');
 
-    await this.contractRepository.manager.transaction(async (manager) => {
-      this.contracts = await manager
-        .createQueryBuilder(Contract, 'contract')
-        .setLock('pessimistic_write')
-        .where('contract.isProcessed = :isProcessed', { isProcessed: false })
-        // .where('contract.isVerified is null')
-        .limit(ContractsBatch)
-        .getMany();
+    try {
+      await this.contractRepository.manager.transaction(async (manager) => {
+        this.contracts = await manager
+          .createQueryBuilder(Contract, 'contract')
+          .setLock('pessimistic_write')
+          .where('contract.isProcessed = :isProcessed', { isProcessed: false })
+          .limit(ContractsBatch)
+          .getMany();
 
-      this.contracts.forEach((c) => {
-        c.isProcessed = true;
+        this.contracts.forEach((c) => {
+          c.isProcessed = true;
+        });
+
+        await manager.save(Contract, this.contracts);
       });
+    } catch (error) {
+      this.logger.error(error);
 
-      await manager.save(Contract, this.contracts);
-    });
+      this.contracts = [];
+    }
   }
 
   async saveContracts(blocks: IBlock[], network: Network) {

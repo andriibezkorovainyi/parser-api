@@ -53,7 +53,7 @@ export class ParserService {
       this.network = await this.networkRepository.save({ name: network });
     }
 
-    this.processBlocks().catch((e) => this.logger.error(e));
+    this.processBlocks();
   }
 
   async processBlocks() {
