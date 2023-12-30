@@ -22,6 +22,8 @@ export const GenesisBlock = 1_000_000;
 
 export const Delay = 3000;
 
+export const QuickNodeNumberRetries = 10;
+
 export const InstanceId = Number(process.env.INSTANCE_ID);
 
 export const apiCredentials = {

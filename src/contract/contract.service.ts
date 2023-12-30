@@ -23,6 +23,7 @@ import {
   EtherscanReqPerSec,
   network,
   quickNConfig,
+  QuickNodeNumberRetries,
   QuickNodeReqPerSec,
 } from '../settings/parser.settings';
 import { delay } from '../utils/helpers';
@@ -241,7 +242,7 @@ export class ContractService {
     address: string,
     counter: number,
   ) {
-    if (counter > 5) {
+    if (counter > QuickNodeNumberRetries) {
       return result;
     }
 
@@ -251,7 +252,7 @@ export class ContractService {
 
     this.logger.error(result || 'Result of getContractBalanceData is null');
 
-    await delay();
+    await delay(2000);
 
     result = await this.getContractBalanceData(address);
 
