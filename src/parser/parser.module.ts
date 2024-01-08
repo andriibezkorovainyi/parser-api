@@ -19,6 +19,8 @@ import { CacheService } from '../cache/cache.service';
 import { HttpModuleOptions } from '@nestjs/axios';
 import { Contract } from '../database/entities/contract.entity';
 import { Network } from '../database/entities/network.entity';
+import { Token } from '../database/entities/token.entity';
+import { TokenModule } from '../token/token.module';
 
 @Module({
   imports: [
@@ -37,6 +39,7 @@ import { Network } from '../database/entities/network.entity';
     ScheduleModule.forRoot(),
     CacheModule,
     ContractModule,
+    TokenModule,
   ],
   providers: [ParserService],
 })

@@ -10,6 +10,7 @@ import {
   IBlock,
   IContract,
   IContractBalanceData,
+  ITokenBalance,
   IVerifiedCodeData,
 } from '../utils/types/interfaces';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
@@ -25,8 +26,9 @@ import {
   quickNConfig,
   QuickNodeNumberRetries,
   QuickNodeReqPerSec,
+  TokensBatch,
 } from '../settings/parser.settings';
-import { delay } from '../utils/helpers';
+import { delay, parseBalance, truncateDecimal } from '../utils/helpers';
 import { Repository } from 'typeorm';
 import { Contract } from '../database/entities/contract.entity';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -39,37 +41,36 @@ import { Alchemy, CoreNamespace } from 'alchemy-sdk';
 import { ethers } from 'ethers';
 import { Core, QNCoreClient } from '@quicknode/sdk';
 import { CacheService } from '../cache/cache.service';
-import {
-  WINSTON_MODULE_NEST_PROVIDER,
-  WINSTON_MODULE_PROVIDER,
-} from 'nest-winston';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+import { Token } from '../database/entities/token.entity';
+import { TokenService } from '../token/token.service';
 
 @Injectable()
 export class ContractService {
   private isProcessing = false;
   private contracts: Contract[] = [];
 
-  private readonly alchemy: CoreNamespace;
   private readonly quickNode: QNCoreClient;
 
   constructor(
-    // @InjectPinoLogger(ContractService.name)
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
-    // @Inject(WINSTON_MODULE_PROVIDER)
-    // private readonly logger: Logger,
     private readonly httpService: HttpService,
     private readonly cacheService: CacheService,
     @InjectRepository(Contract)
     private readonly contractRepository: Repository<Contract>,
+    private readonly tokenService: TokenService,
   ) {
-    this.httpService.axiosRef.defaults.baseURL = 'https://api.etherscan.io/api';
-
-    this.alchemy = new Alchemy(alchemyConfig).core;
     this.quickNode = new Core(quickNConfig).client;
   }
 
   async initialize() {
+    await this.tokenService.processTokenHoldingsToTokens();
+
+    await this.processContractsWithoutBalance();
+
+    this.tokenService.initialize();
+
     await this.processCachedContracts();
 
     this.processContracts();
@@ -92,7 +93,7 @@ export class ContractService {
     for (let i = 0; i < contracts.length; i += EtherscanReqPerSec) {
       this.contracts = contracts.slice(i, i + EtherscanReqPerSec);
 
-      await this.collectBatchData();
+      await this.performRequests();
 
       await this.saveBatchData();
 
@@ -126,7 +127,7 @@ export class ContractService {
 
       await this.setProcessingContracts();
 
-      await this.collectBatchData();
+      await this.performRequests();
 
       await this.saveBatchData();
 
@@ -161,7 +162,7 @@ export class ContractService {
     await this.cacheService.setProcessingContracts(contractIds);
   }
 
-  async collectBatchData() {
+  async performRequests() {
     for (let i = 0; i < this.contracts.length; i += EtherscanReqPerSec) {
       const take = i + EtherscanReqPerSec;
 
@@ -203,17 +204,10 @@ export class ContractService {
     }
   }
 
-  async getSourceCode() {
-    const contract = await this.contractRepository.findOne({
-      where: { isVerified: true },
-    });
-    const baseDir = path.join(__dirname, '../../contracts');
-
-    console.log(await readFile(path.join(baseDir, contract.filePath), 'utf8'));
-  }
-
   async collectBalanceData(contract: Contract) {
-    if (contract.balance !== null || contract.tokenHoldings !== null) {
+    this.logger.debug('called method --> collectBalanceData');
+
+    if (contract.balance !== null) {
       return;
     }
 
@@ -226,15 +220,19 @@ export class ContractService {
 
     const { nativeTokenBalance, result } = data;
 
-    contract.balance = parseFloat(nativeTokenBalance);
+    contract.balance = truncateDecimal(nativeTokenBalance);
 
-    contract.tokenHoldings = result.map(
-      ({ name, totalBalance, address, decimals }) => ({
-        name,
-        address,
-        balance: parseFloat(ethers.formatUnits(totalBalance, Number(decimals))),
-      }),
+    const tokens = result.map(
+      ({ name, totalBalance, address, decimals }) =>
+        new Token({
+          name,
+          address,
+          balance: parseBalance(totalBalance, decimals),
+          contract: contract,
+        }),
     );
+
+    await this.tokenService.insert(tokens);
   }
 
   async checkContractBalanceNeedRetry(
@@ -250,7 +248,7 @@ export class ContractService {
       return result;
     }
 
-    this.logger.error(result || 'Result of getContractBalanceData is null');
+    this.logger.error('Retry getContractBalanceData');
 
     await delay(2000);
 
@@ -316,28 +314,29 @@ export class ContractService {
   }
 
   async saveBatchData() {
-    const [verifiedI, unverifiedI] = this.contracts.reduce(
-      (acc, contract, i) => {
-        if (contract.isVerified) {
-          acc[0].push(i);
-        } else if (contract.isVerified === null) {
-          acc[0].push(i);
-        } else {
-          acc[1].push(i);
-        }
-
-        return acc;
-      },
-      [[], []],
-    );
-
-    await this.contractRepository.save(verifiedI.map((i) => this.contracts[i]));
-
-    if (unverifiedI.length) {
-      await this.contractRepository.delete(
-        unverifiedI.map((i) => this.contracts[i].id),
-      );
-    }
+    await this.contractRepository.save(this.contracts);
+    // const [verifiedI, unverifiedI] = this.contracts.reduce(
+    //   (acc, contract, i) => {
+    //     if (contract.isVerified) {
+    //       acc[0].push(i);
+    //     } else if (contract.isVerified === null) {
+    //       acc[0].push(i);
+    //     } else {
+    //       acc[1].push(i);
+    //     }
+    //
+    //     return acc;
+    //   },
+    //   [[], []],
+    // );
+    //
+    // await this.contractRepository.save(verifiedI.map((i) => this.contracts[i]));
+    //
+    // if (unverifiedI.length) {
+    //   await this.contractRepository.delete(
+    //     unverifiedI.map((i) => this.contracts[i].id),
+    //   );
+    // }
   }
 
   async saveContractSourceCode(
@@ -389,19 +388,12 @@ export class ContractService {
     return await this.checkVerifiedCodeNeedRetry(result, address, counter + 1);
   }
 
-  async retryGetSourceCode(address: string) {
-    const result = null;
-    const i = 0;
-
-    return result;
-  }
-
   async getVerifiedCodeData(
     address: string,
   ): Promise<[IVerifiedCodeData] | null> {
     try {
       const response = await firstValueFrom(
-        this.httpService.get('', {
+        this.httpService.get('https://api.etherscan.io/api', {
           params: {
             module: 'contract',
             action: 'getsourcecode',
@@ -413,7 +405,7 @@ export class ContractService {
 
       return response.data.result;
     } catch (error) {
-      this.logger.error(error);
+      this.logger.error(error.message);
     }
 
     return null;
@@ -483,5 +475,40 @@ export class ContractService {
       .getOne();
 
     return latestContract ? latestContract.blockNumber : 0;
+  }
+
+  async processContractsWithoutBalance() {
+    this.logger.debug('Called method --> processContractsWithoutBalance');
+    const count = await this.contractRepository
+      .createQueryBuilder('contract')
+      .where('contract.balance is null')
+      .andWhere('contract.isVerified = :isVerified', { isVerified: true })
+      .getCount();
+
+    for (let i = 0; i < count; i += QuickNodeReqPerSec) {
+      const contracts = await this.contractRepository
+        .createQueryBuilder('contract')
+        .select(['contract.id', 'contract.address', 'contract.balance'])
+        .where('contract.balance IS NULL')
+        .andWhere('contract.isVerified = TRUE')
+        .take(QuickNodeReqPerSec)
+        .getMany();
+
+      if (contracts.length == 0) {
+        break;
+      }
+
+      await Promise.allSettled(
+        contracts.map(
+          (c) => new Promise((resolve) => resolve(this.collectBalanceData(c))),
+        ),
+      );
+
+      await this.contractRepository.save(contracts);
+
+      await delay(1000);
+    }
+
+    this.logger.debug('Finished processing contracts without balance');
   }
 }

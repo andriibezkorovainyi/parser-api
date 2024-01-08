@@ -12,6 +12,8 @@ export const EtherscanReqPerSec = 5;
 
 export const AlchemyReqPerSec = 10;
 
+export const TokensBatch = 250;
+
 export const QuickNodeReqPerSec = 5;
 
 export const BlocksBatch = 100;

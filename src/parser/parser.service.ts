@@ -33,7 +33,6 @@ export class ParserService {
   private readonly instanceId = InstanceId;
 
   constructor(
-    // @InjectPinoLogger(ParserService.name)
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
     private readonly cacheService: CacheService,

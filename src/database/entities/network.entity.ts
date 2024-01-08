@@ -1,6 +1,7 @@
 import { Entity, Column, PrimaryGeneratedColumn, OneToMany } from 'typeorm';
 import { Contract } from './contract.entity';
 import { NetworkType } from '../../utils/types/enums';
+import { Token } from './token.entity';
 
 @Entity()
 export class Network {

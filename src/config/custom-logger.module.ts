@@ -32,8 +32,7 @@ import * as winston from 'winston';
               }),
         format: winston.format.combine(
           winston.format.timestamp(),
-          winston.format.json(),
-          winston.format.colorize(),
+          utilities.format.nestLike(),
         ),
       }),
       inject: [ConfigService],

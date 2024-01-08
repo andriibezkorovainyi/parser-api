@@ -6,8 +6,12 @@ import {
   UpdateDateColumn,
   ManyToOne,
   Index,
+  OneToMany,
+  OneToOne,
 } from 'typeorm';
 import { Network } from './network.entity';
+import { Token } from './token.entity';
+import { ITokenBalance } from '../../utils/types/interfaces';
 
 @Entity()
 export class Contract {
@@ -33,11 +37,17 @@ export class Contract {
   @Column({ nullable: true })
   name: string;
 
-  @Column({ type: 'decimal', precision: 18, scale: 8, nullable: true })
+  @Column({ type: 'decimal', precision: 20, scale: 8, nullable: true })
   balance: number;
 
+  @Column({ type: 'decimal', precision: 20, scale: 8, nullable: true })
+  tokenBalanceUSD: number;
+
   @Column('json', { nullable: true })
-  tokenHoldings: Array<Record<string, any>>;
+  tokenHoldings: Array<ITokenBalance>;
+
+  @OneToMany(() => Token, (token) => token.contract)
+  tokens: Token[];
 
   @Column({ nullable: true })
   filePath: string;

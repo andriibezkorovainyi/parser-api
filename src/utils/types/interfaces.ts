@@ -33,3 +33,15 @@ export interface IVerifiedCodeData {
 export interface IContractBalanceData extends QNGetWalletTokenBalanceResult {
   nativeTokenBalance?: string;
 }
+
+export interface ITokenBalance {
+  name: string;
+  address: string;
+  balance: number;
+  balanceUSD?: string;
+}
+
+export interface ITokenPrice {
+  address: string;
+  price: number;
+}
