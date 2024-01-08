@@ -270,59 +270,59 @@ export class TokenService {
     }
   }
 
-  async processTokenHoldingsToTokens() {
-    if (process.env.SHOULD_TRANSFORM_TOKEN_HOLDINGS === 'false') {
-      return;
-    }
+  // async processTokenHoldingsToTokens() {
+  //   if (process.env.SHOULD_TRANSFORM_TOKEN_HOLDINGS === 'false') {
+  //     return;
+  //   }
+  //
+  //   this.logger.log('Called method --> processTokenHoldingsToTokens');
+  //
+  //   const count = await this.contractRepository
+  //     .createQueryBuilder('contract')
+  //     .select('COUNT(contract.id)')
+  //     .where('contract.tokenHoldings is not null')
+  //     .getCount();
+  //
+  //   for (let i = 0; i < count; i += 100) {
+  //     this.logger.log(`Processing ${i} of ${count}`);
+  //     await this.transformTokenHoldingsToTokens(i);
+  //     await delay(500);
+  //   }
+  //
+  //   this.logger.log('Finished processing token holdings');
+  // }
 
-    this.logger.log('Called method --> processTokenHoldingsToTokens');
-
-    const count = await this.contractRepository
-      .createQueryBuilder('contract')
-      .select('COUNT(contract.id)')
-      .where('contract.tokenHoldings is not null')
-      .getCount();
-
-    for (let i = 0; i < count; i += 100) {
-      this.logger.log(`Processing ${i} of ${count}`);
-      await this.transformTokenHoldingsToTokens(i);
-      await delay(500);
-    }
-
-    this.logger.log('Finished processing token holdings');
-  }
-
-  async transformTokenHoldingsToTokens(skip: number) {
-    this.logger.log('Called method --> transformTokenHoldingsToTokens');
-
-    const tokens = [];
-
-    const contracts = await this.contractRepository
-      .createQueryBuilder('contract')
-      .select('contract.id')
-      .addSelect('contract.tokenHoldings')
-      .where('contract.tokenHoldings is not null')
-      .skip(skip)
-      .take(100)
-      .getMany();
-
-    for (let i = 0; i < contracts.length; i++) {
-      const contract = contracts[i];
-
-      for (const { address, balance, name } of contract.tokenHoldings) {
-        tokens.push(
-          new Token({
-            address,
-            balance: truncateDecimal(balance),
-            name,
-            contract,
-          }),
-        );
-      }
-    }
-
-    await this.insert(tokens);
-  }
+  // async transformTokenHoldingsToTokens(skip: number) {
+  //   this.logger.log('Called method --> transformTokenHoldingsToTokens');
+  //
+  //   const tokens = [];
+  //
+  //   const contracts = await this.contractRepository
+  //     .createQueryBuilder('contract')
+  //     .select('contract.id')
+  //     .addSelect('contract.tokenHoldings')
+  //     .where('contract.tokenHoldings is not null')
+  //     .skip(skip)
+  //     .take(100)
+  //     .getMany();
+  //
+  //   for (let i = 0; i < contracts.length; i++) {
+  //     const contract = contracts[i];
+  //
+  //     for (const { address, balance, name } of contract.tokenHoldings) {
+  //       tokens.push(
+  //         new Token({
+  //           address,
+  //           balance: truncateDecimal(balance),
+  //           name,
+  //           contract,
+  //         }),
+  //       );
+  //     }
+  //   }
+  //
+  //   await this.insert(tokens);
+  // }
 
   async insert(tokens: Token[]) {
     await this.tokenRepository

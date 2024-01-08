@@ -65,7 +65,7 @@ export class ContractService {
   }
 
   async initialize() {
-    await this.tokenService.processTokenHoldingsToTokens();
+    // await this.tokenService.processTokenHoldingsToTokens();
 
     await this.processContractsWithoutBalance();
 
