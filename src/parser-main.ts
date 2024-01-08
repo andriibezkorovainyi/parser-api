@@ -11,7 +11,6 @@ import { TokenService } from './token/token.service';
 async function bootstrapParser() {
   const app = await NestFactory.create(ParserModule);
 
-  // app.useLogger(app.get(Logger));
   app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
 
   app.useGlobalPipes(

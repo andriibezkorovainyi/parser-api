@@ -47,6 +47,7 @@ import { TokenService } from '../token/token.service';
 
 @Injectable()
 export class ContractService {
+  private readonly instanceId = process.env.INSTANCE_ID;
   private isProcessing = false;
   private contracts: Contract[] = [];
 
@@ -196,7 +197,7 @@ export class ContractService {
             ),
         );
 
-      await Promise.all(promises);
+      await Promise.allSettled(promises);
 
       if (take < verifiedContracts.length) {
         await delay();
@@ -250,7 +251,7 @@ export class ContractService {
 
     this.logger.error('Retry getContractBalanceData');
 
-    await delay(2000);
+    await delay(3000);
 
     result = await this.getContractBalanceData(address);
 
@@ -478,6 +479,10 @@ export class ContractService {
   }
 
   async processContractsWithoutBalance() {
+    if (Number(this.instanceId) !== 1) {
+      return;
+    }
+
     this.logger.debug('Called method --> processContractsWithoutBalance');
     const count = await this.contractRepository
       .createQueryBuilder('contract')
