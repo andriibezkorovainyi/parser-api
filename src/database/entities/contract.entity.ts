@@ -43,9 +43,6 @@ export class Contract {
   @Column({ type: 'decimal', precision: 20, scale: 8, nullable: true })
   tokenBalanceUSD: number;
 
-  @Column('json', { nullable: true })
-  tokenHoldings: Array<ITokenBalance>;
-
   @OneToMany(() => Token, (token) => token.contract)
   tokens: Token[];
 

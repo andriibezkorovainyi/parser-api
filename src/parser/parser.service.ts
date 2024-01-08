@@ -197,7 +197,7 @@ export class ParserService {
         processedBlockNumbers,
       );
 
-      if (!this.isSynchronized) {
+      if (this.isSynchronized) {
         this.logger.debug('Parser service stopped');
       }
     }
